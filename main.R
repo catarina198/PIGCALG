@@ -168,18 +168,17 @@ modo_execucao <- "funcao_especifica"
 # "correcao_stands_final", "run_exposure_interface", "run_exposure_lcp",
 # "update_stands_exposicao", "expo_values_correction", "informacao_UTs",
 # "prioridade_absoluta", "prioridade_relativa", "executar_bloco_donuts", "executar_bloco_exposicao"
-funcao_especifica <- "stands_interface"
+funcao_especifica <- "stands_edificado"
 
 # Argumentos para a funcao especifica (deixar list() para usar defaults da funcao)
 args_funcao_especifica <- list(
-  shp_aglomerados_0_100 = shp_aglomerados_0_100,
-  shp_stands_base = shp_stands_base,
-  shp_interface_dissolve = shp_interface_dissolve,
-  stands_interface_int = stands_interface_int,
-  stands_interface_diss = stands_interface_diss,
-  stands_interface_final = stands_interface_final,
-  stands_erase_single = stands_erase_single,
+  shp_aglomerados_base = shp_aglomerados_base,
   interface_diss_completa = interface_diss_completa,
+  stands_aglom_int = stands_aglom_int,
+  stands_aglom_int_diss = stands_aglom_int_diss,
+  stands_sem_aglomerado = stands_sem_aglomerado,
+  shp_stands_interface_edf = shp_stands_interface_edf,
+  shp_municipios_path = shp_municipios,
   verbose = FALSE
   )
 
@@ -222,4 +221,3 @@ if (identical(modo_execucao, "all")) {
     call. = FALSE
   )
 }
-

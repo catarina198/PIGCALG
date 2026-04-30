@@ -365,6 +365,98 @@ stands_interface <- function(
     res
   }
 
+  erase_difference_with_fallback <- function(stands_sf, mask_sf) {
+    # Tentativa principal: difference global (mais rapido)
+    out_global <- tryCatch(
+      st_difference(stands_sf, st_union(mask_sf)),
+      error = function(e) e
+    )
+    if (!inherits(out_global, "error")) {
+      return(out_global)
+    }
+
+    log_checkpoint(
+      paste0(
+        "Bloco 2E - fallback local ativado (difference global falhou): ",
+        conditionMessage(out_global)
+      )
+    )
+
+    idx_list <- st_intersects(stands_sf, mask_sf)
+    parts <- vector("list", nrow(stands_sf))
+
+    for (i in seq_len(nrow(stands_sf))) {
+      stand_i <- stands_sf[i, , drop = FALSE]
+      idx_i <- idx_list[[i]]
+
+      if (length(idx_i) == 0) {
+        parts[[i]] <- stand_i
+        next
+      }
+
+      mask_i <- mask_sf[idx_i, , drop = FALSE]
+
+      # 1) tentativa local com uniao da mascara incidente
+      diff_i <- tryCatch(
+        st_difference(stand_i, st_union(mask_i)),
+        error = function(e) NULL
+      )
+
+      # 2) fallback: diferenca sequencial por cada geometria incidente
+      if (is.null(diff_i)) {
+        diff_seq <- stand_i
+        ok_seq <- TRUE
+
+        for (j in seq_len(nrow(mask_i))) {
+          diff_seq <- tryCatch(
+            st_difference(diff_seq, st_geometry(mask_i[j, ])),
+            error = function(e) {
+              ok_seq <<- FALSE
+              diff_seq
+            }
+          )
+          if (!ok_seq || nrow(diff_seq) == 0) break
+        }
+
+        if (ok_seq) {
+          diff_i <- diff_seq
+        } else {
+          # 3) ultima tentativa: normalizar localmente e repetir
+          diff_i <- tryCatch({
+            stand_n <- normalizar_poligonos(stand_i)
+            mask_n <- normalizar_poligonos(mask_i)
+            st_difference(stand_n, st_union(mask_n))
+          }, error = function(e) NULL)
+        }
+      }
+
+      # Nunca perder feature por falha topologica: manter original.
+      if (is.null(diff_i)) {
+        parts[[i]] <- stand_i
+      } else {
+        parts[[i]] <- diff_i
+      }
+
+      if ((i %% 2000L) == 0L) {
+        log_checkpoint(
+          paste0(
+            "Bloco 2E - fallback local progresso: ",
+            i,
+            "/",
+            nrow(stands_sf)
+          )
+        )
+      }
+    }
+
+    valid_parts <- Filter(function(x) inherits(x, "sf") && nrow(x) > 0, parts)
+    if (length(valid_parts) == 0) {
+      return(stands_sf[0, , drop = FALSE])
+    }
+
+    do.call(rbind, valid_parts)
+  }
+
   dir.create(dirname(shp_interface_dissolve), recursive = TRUE, showWarnings = FALSE)
   dir.create(dirname(stands_interface_int), recursive = TRUE, showWarnings = FALSE)
   dir.create(dirname(stands_interface_diss), recursive = TRUE, showWarnings = FALSE)
@@ -426,6 +518,11 @@ stands_interface <- function(
       shp_interface_dissolve_sf,
       st_crs(shp_stands_base_sf)
     )
+    shp_interface_dissolve_sf <- tryCatch(
+      st_set_precision(shp_interface_dissolve_sf, 0),
+      error = function(e) shp_interface_dissolve_sf
+    )
+    shp_interface_dissolve_sf <- normalizar_poligonos(shp_interface_dissolve_sf)
     log_sf_diag("Bloco 2 - shp_interface_dissolve_sf (transformado)", shp_interface_dissolve_sf)
   })
 
@@ -633,17 +730,9 @@ stands_interface <- function(
   ## =========================================================
 
   run_checkpoint("Bloco 2E - st_difference erase", {
-    stands_erase_sf <- tryCatch(
-      st_difference(
-        shp_stands_base_sf,
-        st_union(shp_interface_dissolve_sf)
-      ),
-      error = function(e) {
-        stop(
-          paste0("st_difference falhou: ", conditionMessage(e)),
-          call. = FALSE
-        )
-      }
+    stands_erase_sf <- erase_difference_with_fallback(
+      shp_stands_base_sf,
+      shp_interface_dissolve_sf
     )
 
     stands_erase_sf <- normalizar_poligonos(stands_erase_sf)
