@@ -1125,6 +1125,8 @@ correcao_stands_final <- function(
   quiet_mode <- !isTRUE(verbose)
   threshold_ha <- threshold_eliminate_ha
   max_iter <- max_small_iter
+  abs_tol_m2 <- 1
+  rel_tol_area <- 1e-8
 
   worker_state_path <- function(progress_dir, worker_id) {
     file.path(progress_dir, sprintf("worker_%02d.rds", as.integer(worker_id)))
@@ -1309,13 +1311,38 @@ correcao_stands_final <- function(
       sf_tmp <- tryCatch(st_cast(sf_tmp, "MULTIPOLYGON", warn = FALSE), error = function(e) NULL)
       if (is.null(sf_tmp) || nrow(sf_tmp) == 0) return(NULL)
 
-      g_out <- st_geometry(sf_tmp)
+      geom_all <- tryCatch(
+        st_union(st_geometry(sf_tmp)),
+        error = function(e) st_combine(st_geometry(sf_tmp))
+      )
+      if (is.null(geom_all) || length(geom_all) == 0) return(NULL)
+
+      sf_all <- tryCatch(
+        st_as_sf(data.frame(.id = 1L), geometry = st_sfc(geom_all[[1]], crs = crs_ref)),
+        error = function(e) NULL
+      )
+      if (is.null(sf_all)) return(NULL)
+      sf_all <- tryCatch(st_collection_extract(sf_all, "POLYGON"), error = function(e) NULL)
+      if (is.null(sf_all) || nrow(sf_all) == 0) return(NULL)
+      sf_all <- tryCatch(st_cast(sf_all, "MULTIPOLYGON", warn = FALSE), error = function(e) NULL)
+      if (is.null(sf_all) || nrow(sf_all) == 0) return(NULL)
+
+      g_out <- st_geometry(sf_all)
       if (length(g_out) == 0) return(NULL)
       g_out[[1]]
     }
 
+    area_within_tol <- function(area_ref, area_new) {
+      if (!is.finite(area_ref) || !is.finite(area_new) || area_ref <= 0 || area_new <= 0) {
+        return(FALSE)
+      }
+      tol <- max(abs_tol_m2, rel_tol_area * max(area_ref, area_new))
+      abs(area_new - area_ref) <= tol
+    }
+
     iter <- 0L
     skipped_invalid_total <- 0L
+    skipped_area_total <- 0L
     repeat {
       iter <- iter + 1L
 
@@ -1326,6 +1353,7 @@ correcao_stands_final <- function(
       n_small_now <- length(ids_pequenos)
       removed_iter <- 0L
       skipped_invalid_iter <- 0L
+      skipped_area_iter <- 0L
       processed_iter <- 0L
 
       if (isTRUE(verbose_mode)) {
@@ -1343,10 +1371,11 @@ correcao_stands_final <- function(
       }
 
       report_progress <- function() {
+        ignored_iter <- skipped_invalid_iter + skipped_area_iter
         if (isTRUE(verbose_mode) && (processed_iter %% 250L == 0L || processed_iter == n_small_now)) {
           cat(sprintf(
             "Iteracao %d - processados: %d/%d | agregados: %d | ignorados: %d\n",
-            iter, processed_iter, n_small_now, removed_iter, skipped_invalid_iter
+            iter, processed_iter, n_small_now, removed_iter, ignored_iter
           ))
         }
         if (is.function(progress_cb) && (processed_iter %% 250L == 0L || processed_iter == n_small_now)) {
@@ -1356,7 +1385,7 @@ correcao_stands_final <- function(
             processados = processed_iter,
             total = n_small_now,
             agregados = removed_iter,
-            ignorados = skipped_invalid_iter
+            ignorados = ignored_iter
           ))
         }
       }
@@ -1497,6 +1526,15 @@ correcao_stands_final <- function(
           next
         }
 
+        area_ref <- tryCatch(as.numeric(st_area(st_as_sfc(geom_new, crs = st_crs(sf_obj)))), error = function(e) NA_real_)
+        area_new <- tryCatch(as.numeric(st_area(st_as_sfc(geom_new_norm, crs = st_crs(sf_obj)))), error = function(e) NA_real_)
+        if (!area_within_tol(area_ref, area_new)) {
+          skipped_area_iter <- skipped_area_iter + 1L
+          skipped_area_total <- skipped_area_total + 1L
+          report_progress()
+          next
+        }
+
         sf_obj$geometry[sf_obj$tmp_id == id_best] <- st_sfc(
           geom_new_norm,
           crs = st_crs(sf_obj)
@@ -1513,6 +1551,9 @@ correcao_stands_final <- function(
       if (isTRUE(verbose_mode) && skipped_invalid_iter > 0) {
         cat(sprintf("Iteracao %d - agregacoes ignoradas por geometria invalida: %d\n", iter, skipped_invalid_iter))
       }
+      if (isTRUE(verbose_mode) && skipped_area_iter > 0) {
+        cat(sprintf("Iteracao %d - agregacoes ignoradas por perda de area: %d\n", iter, skipped_area_iter))
+      }
 
       if (removed_iter == 0) {
         if (isTRUE(verbose_mode)) cat("Paragem: nenhuma agregacao na iteracao.\n")
@@ -1522,6 +1563,9 @@ correcao_stands_final <- function(
 
     if (isTRUE(verbose_mode) && skipped_invalid_total > 0) {
       cat(sprintf("Total de agregacoes ignoradas por geometria invalida: %d\n", skipped_invalid_total))
+    }
+    if (isTRUE(verbose_mode) && skipped_area_total > 0) {
+      cat(sprintf("Total de agregacoes ignoradas por perda de area: %d\n", skipped_area_total))
     }
 
     if ("tmp_id" %in% names(sf_obj)) sf_obj$tmp_id <- NULL
@@ -1618,9 +1662,33 @@ correcao_stands_final <- function(
       sf_tmp <- tryCatch(st_cast(sf_tmp, "MULTIPOLYGON", warn = FALSE), error = function(e) NULL)
       if (is.null(sf_tmp) || nrow(sf_tmp) == 0) return(NULL)
 
-      g_out <- st_geometry(sf_tmp)
+      geom_all <- tryCatch(
+        st_union(st_geometry(sf_tmp)),
+        error = function(e) st_combine(st_geometry(sf_tmp))
+      )
+      if (is.null(geom_all) || length(geom_all) == 0) return(NULL)
+
+      sf_all <- tryCatch(
+        st_as_sf(data.frame(.id = 1L), geometry = st_sfc(geom_all[[1]], crs = crs_ref)),
+        error = function(e) NULL
+      )
+      if (is.null(sf_all)) return(NULL)
+      sf_all <- tryCatch(st_collection_extract(sf_all, "POLYGON"), error = function(e) NULL)
+      if (is.null(sf_all) || nrow(sf_all) == 0) return(NULL)
+      sf_all <- tryCatch(st_cast(sf_all, "MULTIPOLYGON", warn = FALSE), error = function(e) NULL)
+      if (is.null(sf_all) || nrow(sf_all) == 0) return(NULL)
+
+      g_out <- st_geometry(sf_all)
       if (length(g_out) == 0) return(NULL)
       g_out[[1]]
+    }
+
+    area_within_tol_local <- function(area_ref, area_new) {
+      if (!is.finite(area_ref) || !is.finite(area_new) || area_ref <= 0 || area_new <= 0) {
+        return(FALSE)
+      }
+      tol <- max(abs_tol_m2, rel_tol_area * max(area_ref, area_new))
+      abs(area_new - area_ref) <= tol
     }
 
     local1_sf$.__l1_id <- seq_len(nrow(local1_sf))
@@ -1635,6 +1703,7 @@ correcao_stands_final <- function(
     n_candidatos <- length(ids_candidatos)
     n_transferidos <- 0L
     n_ignorados <- 0L
+    n_ignorados_area <- 0L
     processed_iter <- 0L
 
     if (isTRUE(verbose_mode)) {
@@ -1750,6 +1819,14 @@ correcao_stands_final <- function(
         next
       }
 
+      area_ref <- tryCatch(as.numeric(st_area(st_as_sfc(geom_new, crs = st_crs(local1_sf)))), error = function(e) NA_real_)
+      area_new <- tryCatch(as.numeric(st_area(st_as_sfc(geom_new_norm, crs = st_crs(local1_sf)))), error = function(e) NA_real_)
+      if (!area_within_tol_local(area_ref, area_new)) {
+        n_ignorados <- n_ignorados + 1L
+        n_ignorados_area <- n_ignorados_area + 1L
+        next
+      }
+
       local1_sf$geometry[idx_dest] <- st_sfc(geom_new_norm, crs = st_crs(local1_sf))
       local2_sf <- local2_sf[local2_sf$.__l2_id != cid, ]
       n_transferidos <- n_transferidos + 1L
@@ -1765,9 +1842,10 @@ correcao_stands_final <- function(
 
     if (isTRUE(verbose_mode)) {
       cat(sprintf(
-        "Local 2 rodeado por Local 1 - agregados: %d | ignorados: %d\n",
+        "Local 2 rodeado por Local 1 - agregados: %d | ignorados: %d | ignorados_perda_area: %d\n",
         n_transferidos,
-        n_ignorados
+        n_ignorados,
+        n_ignorados_area
       ))
     }
 

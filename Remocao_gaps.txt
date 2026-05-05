@@ -1,0 +1,267 @@
+# -*- coding: utf-8 -*-
+
+"""
+SCRIPT: Remoção de gaps e limpeza topológica de polígonos
+
+DESCRIÇÃO:
+Este script executa um workflow completo em ArcGIS Pro para corrigir problemas
+topológicos numa shapefile de polígonos, nomeadamente microgaps entre features.
+
+O processo inclui:
+1. Conversão do shapefile para File Geodatabase (mais estável)
+2. Reparação de geometrias inválidas (Repair Geometry)
+3. Alinhamento de vértices próximos (Integrate)
+4. Identificação de gaps através de Union (Gaps Allowed = OFF)
+5. Seleção dos gaps criados (polígonos com FID = -1)
+6. Eliminação dos gaps, fundindo-os com o maior polígono vizinho (Eliminate)
+7. Exportação do resultado final para shapefile
+8. Limpeza de campos adicionais criados pelo Union
+9. Recalculo da área em hectares (AREA_ha)
+10. Criação de um identificador único sequencial (Stand_IDv2)
+
+OBJETIVO:
+Garantir que o dataset final:
+- não contém gaps
+- possui polígonos contíguos
+- está preparado para análises espaciais (ex: vizinhança em R)
+
+NOTAS:
+- O processamento é feito em File Geodatabase para evitar corrupção de dados
+- O shapefile final é apenas para output/entrega
+- A tolerância do Integrate deve ser ajustada consoante a escala dos dados
+
+REQUISITOS:
+- ArcGIS Pro
+- arcpy
+
+AUTOR: (opcional)
+DATA: (opcional)
+"""
+
+
+
+# -*- coding: utf-8 -*-
+import arcpy
+import os
+
+arcpy.env.overwriteOutput = True
+
+# --------------------------------------------------
+# CONFIGURAÇÃO
+# --------------------------------------------------
+input_shp = r"C:\projetos\PIGCALG\09_resultados_2026_v2\Outputs_Algarve\Analise\V4_20260430\Aglomerados\shp_stands_interface_edf.shp"
+
+work_folder = r"C:\projetos\PIGCALG\09_resultados_2026_v2\Outputs_Algarve\Analise\V4_20260430\Aglomerados"
+gdb_name = "No_Gaps.gdb"
+gdb_path = os.path.join(work_folder, gdb_name)
+
+output_shp = r"C:\projetos\PIGCALG\09_resultados_2026_v2\Outputs_Algarve\Analise\V4_20260430\Aglomerados\shp_stands_interface_edf_nogaps.shp"
+
+xy_tolerance = "0.5 Meters"
+
+# Feature classes intermédias
+fc_original = os.path.join(gdb_path, "stands_original")
+fc_repair = os.path.join(gdb_path, "stands_repair")
+fc_union = os.path.join(gdb_path, "stands_union")
+fc_clean = os.path.join(gdb_path, "stands_clean")
+
+union_layer = "stands_union_lyr"
+
+# --------------------------------------------------
+# VALIDAÇÕES
+# --------------------------------------------------
+if not arcpy.Exists(input_shp):
+    raise FileNotFoundError(f"Input não existe: {input_shp}")
+
+if not os.path.isdir(work_folder):
+    raise FileNotFoundError(f"Pasta de trabalho não existe: {work_folder}")
+
+# --------------------------------------------------
+# 1. CRIAR FILE GEODATABASE
+# --------------------------------------------------
+if not arcpy.Exists(gdb_path):
+    print("A criar GDB...")
+    arcpy.management.CreateFileGDB(work_folder, gdb_name)
+else:
+    print("GDB já existe. Vai ser reutilizada.")
+
+# --------------------------------------------------
+# 2. COPIAR SHAPEFILE ORIGINAL PARA GDB
+# --------------------------------------------------
+print("A copiar shapefile original para GDB...")
+
+if arcpy.Exists(fc_original):
+    arcpy.management.Delete(fc_original)
+
+arcpy.conversion.FeatureClassToFeatureClass(
+    input_shp,
+    gdb_path,
+    "stands_original"
+)
+
+# --------------------------------------------------
+# 3. REPAIR GEOMETRY
+# --------------------------------------------------
+print("A reparar geometria...")
+
+if arcpy.Exists(fc_repair):
+    arcpy.management.Delete(fc_repair)
+
+arcpy.management.CopyFeatures(fc_original, fc_repair)
+
+arcpy.management.RepairGeometry(
+    fc_repair,
+    "DELETE_NULL",
+    "ESRI"
+)
+
+# --------------------------------------------------
+# 4. INTEGRATE
+# --------------------------------------------------
+print(f"A executar Integrate com tolerância {xy_tolerance}...")
+
+arcpy.management.Integrate(
+    [[fc_repair, 1]],
+    xy_tolerance
+)
+
+# --------------------------------------------------
+# 5. UNION COM GAPS DESATIVADOS
+# --------------------------------------------------
+print("A executar Union com Gaps Allowed = OFF...")
+
+if arcpy.Exists(fc_union):
+    arcpy.management.Delete(fc_union)
+
+arcpy.analysis.Union(
+    in_features=[[fc_repair, 1]],
+    out_feature_class=fc_union,
+    join_attributes="ALL",
+    cluster_tolerance=None,
+    gaps="NO_GAPS"
+)
+
+# --------------------------------------------------
+# 6. IDENTIFICAR CAMPO FID DO UNION
+# --------------------------------------------------
+fields = [f.name for f in arcpy.ListFields(fc_union)]
+fid_fields = [f for f in fields if f.upper().startswith("FID_")]
+
+if not fid_fields:
+    raise RuntimeError(
+        "Não foi encontrado nenhum campo FID_ no output do Union."
+    )
+
+fid_field = fid_fields[0]
+print(f"Campo FID usado para identificar gaps: {fid_field}")
+
+where_gaps = f"{arcpy.AddFieldDelimiters(fc_union, fid_field)} = -1"
+
+# --------------------------------------------------
+# 7. SELECIONAR GAPS
+# --------------------------------------------------
+print("A selecionar gaps...")
+
+if arcpy.Exists(union_layer):
+    arcpy.management.Delete(union_layer)
+
+arcpy.management.MakeFeatureLayer(fc_union, union_layer)
+
+arcpy.management.SelectLayerByAttribute(
+    union_layer,
+    "NEW_SELECTION",
+    where_gaps
+)
+
+gap_count = int(arcpy.management.GetCount(union_layer)[0])
+print(f"Gaps selecionados: {gap_count}")
+
+# --------------------------------------------------
+# 8. ELIMINATE — fundir gaps com vizinho maior
+# --------------------------------------------------
+if arcpy.Exists(fc_clean):
+    arcpy.management.Delete(fc_clean)
+
+if gap_count > 0:
+    print("A eliminar gaps com Largest Area Neighbor...")
+    arcpy.management.Eliminate(
+        union_layer,
+        fc_clean,
+        "AREA"
+    )
+else:
+    print("Nenhum gap encontrado. A copiar Union para output limpo...")
+    arcpy.management.CopyFeatures(fc_union, fc_clean)
+
+# --------------------------------------------------
+# 9. EXPORTAR PARA SHAPEFILE FINAL
+# --------------------------------------------------
+print("A exportar shapefile final...")
+
+if arcpy.Exists(output_shp):
+    arcpy.management.Delete(output_shp)
+
+out_folder = os.path.dirname(output_shp)
+out_name = os.path.basename(output_shp)
+
+arcpy.conversion.FeatureClassToFeatureClass(
+    fc_clean,
+    out_folder,
+    out_name
+)
+
+# --------------------------------------------------
+# 10. APAGAR CAMPOS EXTRA DO UNION
+# --------------------------------------------------
+print("A apagar campos extra do Union...")
+
+fields_to_delete = ["FID_stands", "Shape_Leng"]
+existing_fields = [f.name for f in arcpy.ListFields(output_shp)]
+
+delete_now = [f for f in fields_to_delete if f in existing_fields]
+
+if delete_now:
+    arcpy.management.DeleteField(output_shp, delete_now)
+    print(f"Campos apagados: {delete_now}")
+else:
+    print("Nenhum campo extra encontrado para apagar.")
+
+# --------------------------------------------------
+# 11. RECALCULAR AREA_ha
+# --------------------------------------------------
+print("A recalcular AREA_ha...")
+
+existing_fields = [f.name for f in arcpy.ListFields(output_shp)]
+
+if "AREA_ha" not in existing_fields:
+    arcpy.management.AddField(output_shp, "AREA_ha", "DOUBLE")
+
+arcpy.management.CalculateGeometryAttributes(
+    output_shp,
+    [["AREA_ha", "AREA_GEODESIC"]],
+    area_unit="HECTARES"
+)
+
+# --------------------------------------------------
+# 12. RECALCULAR Stand_IDv2 COMO ID ÚNICO
+# --------------------------------------------------
+print("A recalcular Stand_IDv2...")
+
+existing_fields = [f.name for f in arcpy.ListFields(output_shp)]
+
+if "Stand_IDv2" not in existing_fields:
+    arcpy.management.AddField(output_shp, "Stand_IDv2", "LONG")
+
+with arcpy.da.UpdateCursor(output_shp, ["Stand_IDv2"]) as cursor:
+    new_id = 1
+    for row in cursor:
+        row[0] = new_id
+        cursor.updateRow(row)
+        new_id += 1
+
+# --------------------------------------------------
+# FIM
+# --------------------------------------------------
+print("PROCESSO CONCLUÍDO COM SUCESSO.")
+print(f"Output final: {output_shp}")
+print(f"Total de polígonos finais: {new_id - 1}")

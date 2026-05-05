@@ -1,0 +1,440 @@
+# -*- coding: utf-8 -*-
+
+"""
+SCRIPT: Agregação iterativa de polígonos pequenos por Local
+
+INPUT:
+- shp_stands_interface_edf_nogaps.shp
+- Assume-se que este input já está sem gaps.
+
+REGRAS:
+1. Local 3 agrega apenas com Local 3.
+2. Local 1 agrega apenas com Local 1.
+3. Local 2 agrega primeiro apenas com Local 2.
+4. Local 2 pequeno rodeado apenas por Local 1 agrega ao maior vizinho Local 1.
+5. Local 1 pequeno rodeado apenas por Local 3 agrega ao maior vizinho Local 3.
+6. Aplica Multipart To Singlepart no início e no fim.
+7. Recalcula AREA_ha.
+8. Recalcula Stand_IDv2 como ID único sequencial.
+"""
+
+import arcpy
+import os
+
+arcpy.env.overwriteOutput = True
+
+# --------------------------------------------------
+# CONFIGURAÇÃO
+# --------------------------------------------------
+
+input_shp = r"C:\projetos\PIGCALG\09_resultados_2026_v2\Outputs_Algarve\Analise\V4_20260430\Aglomerados\shp_stands_interface_edf_nogaps.shp"
+
+work_folder = r"C:\projetos\PIGCALG\09_resultados_2026_v2\Outputs_Algarve\Analise\V4_20260430\Aglomerados"
+
+gdb_path = os.path.join(work_folder, "Aggregate_Small_By_Local_Iter.gdb")
+
+output_shp = r"C:\projetos\PIGCALG\09_resultados_2026_v2\Outputs_Algarve\Analise\V4_20260430\UTratamento\No_Gaps\stands_alg_interface_final.shp"
+
+area_limit = 0.1
+max_iterations = 10
+
+# --------------------------------------------------
+# VALIDAÇÕES
+# --------------------------------------------------
+
+if not arcpy.Exists(input_shp):
+    raise FileNotFoundError(f"Input não existe: {input_shp}")
+
+if not os.path.isdir(work_folder):
+    raise FileNotFoundError(f"Pasta de trabalho não existe: {work_folder}")
+
+output_folder = os.path.dirname(output_shp)
+
+if not os.path.isdir(output_folder):
+    os.makedirs(output_folder)
+
+if not arcpy.Exists(gdb_path):
+    arcpy.management.CreateFileGDB(work_folder, os.path.basename(gdb_path))
+
+# --------------------------------------------------
+# FUNÇÕES
+# --------------------------------------------------
+
+def recalc_area(fc):
+    arcpy.management.CalculateGeometryAttributes(
+        fc,
+        [["AREA_ha", "AREA_GEODESIC"]],
+        area_unit="HECTARES"
+    )
+
+
+def count_small(fc):
+    lyr = "count_small_lyr"
+
+    if arcpy.Exists(lyr):
+        arcpy.management.Delete(lyr)
+
+    arcpy.management.MakeFeatureLayer(fc, lyr)
+
+    where = f"{arcpy.AddFieldDelimiters(fc, 'AREA_ha')} < {area_limit}"
+
+    arcpy.management.SelectLayerByAttribute(
+        lyr,
+        "NEW_SELECTION",
+        where
+    )
+
+    count = int(arcpy.management.GetCount(lyr)[0])
+
+    arcpy.management.Delete(lyr)
+
+    return count
+
+
+def process_local_same_local(local_value):
+    print("\n==============================")
+    print(f"PROCESSAR Local = {local_value}")
+    print("==============================")
+
+    fc_local = os.path.join(gdb_path, f"local_{local_value}")
+    fc_local_single = os.path.join(gdb_path, f"local_{local_value}_single")
+    fc_current = os.path.join(gdb_path, f"local_{local_value}_current")
+
+    for fc in [fc_local, fc_local_single, fc_current]:
+        if arcpy.Exists(fc):
+            arcpy.management.Delete(fc)
+
+    where_local = f"{arcpy.AddFieldDelimiters(input_shp, 'Local')} = {local_value}"
+
+    arcpy.conversion.FeatureClassToFeatureClass(
+        input_shp,
+        gdb_path,
+        f"local_{local_value}",
+        where_local
+    )
+
+    print("A aplicar Multipart To Singlepart no início...")
+    arcpy.management.MultipartToSinglepart(
+        fc_local,
+        fc_local_single
+    )
+
+    arcpy.management.CopyFeatures(fc_local_single, fc_current)
+
+    previous_count = None
+
+    for iteration in range(1, max_iterations + 1):
+        print(f"\nLocal {local_value} | Iteração {iteration}")
+
+        recalc_area(fc_current)
+
+        current_count = count_small(fc_current)
+        print(f"Polígonos abaixo de {area_limit} ha: {current_count}")
+
+        if current_count == 0:
+            print("Sem polígonos pequenos. Parar este Local.")
+            break
+
+        if previous_count is not None and current_count >= previous_count:
+            print("Número de polígonos pequenos não diminuiu. Parar este Local.")
+            break
+
+        lyr = f"lyr_local_{local_value}_{iteration}"
+
+        if arcpy.Exists(lyr):
+            arcpy.management.Delete(lyr)
+
+        arcpy.management.MakeFeatureLayer(fc_current, lyr)
+
+        where_small = f"{arcpy.AddFieldDelimiters(fc_current, 'AREA_ha')} < {area_limit}"
+
+        arcpy.management.SelectLayerByAttribute(
+            lyr,
+            "NEW_SELECTION",
+            where_small
+        )
+
+        fc_next = os.path.join(gdb_path, f"local_{local_value}_iter_{iteration}")
+
+        if arcpy.Exists(fc_next):
+            arcpy.management.Delete(fc_next)
+
+        try:
+            arcpy.management.Eliminate(
+                lyr,
+                fc_next,
+                "AREA"
+            )
+        except arcpy.ExecuteError:
+            print("Eliminate falhou. A manter versão atual.")
+            print(arcpy.GetMessages(2))
+            break
+
+        previous_count = current_count
+
+        arcpy.management.Delete(fc_current)
+        arcpy.management.CopyFeatures(fc_next, fc_current)
+
+        arcpy.management.Delete(lyr)
+
+    return fc_current
+
+
+def select_surrounded_by_local(fc, source_local, target_local):
+    print(
+        f"\nA identificar Local={source_local} pequenos rodeados apenas por Local={target_local}..."
+    )
+
+    oid_field = arcpy.Describe(fc).OIDFieldName
+    candidate_oids = []
+
+    with arcpy.da.SearchCursor(fc, [oid_field, "Local", "AREA_ha"]) as cursor:
+        for oid, local, area in cursor:
+            if local == source_local and area is not None and area < area_limit:
+                candidate_oids.append(oid)
+
+    print(f"Candidatos Local={source_local} abaixo de {area_limit} ha: {len(candidate_oids)}")
+
+    if not candidate_oids:
+        return []
+
+    candidate_layer = f"candidate_l{source_local}_l{target_local}"
+    neighbor_layer = f"neighbor_l{source_local}_l{target_local}"
+
+    for lyr in [candidate_layer, neighbor_layer]:
+        if arcpy.Exists(lyr):
+            arcpy.management.Delete(lyr)
+
+    arcpy.management.MakeFeatureLayer(fc, candidate_layer)
+    arcpy.management.MakeFeatureLayer(fc, neighbor_layer)
+
+    selected_oids = []
+    oid_delim = arcpy.AddFieldDelimiters(fc, oid_field)
+
+    for oid in candidate_oids:
+        arcpy.management.SelectLayerByAttribute(
+            candidate_layer,
+            "NEW_SELECTION",
+            f"{oid_delim} = {oid}"
+        )
+
+        arcpy.management.SelectLayerByLocation(
+            neighbor_layer,
+            "BOUNDARY_TOUCHES",
+            candidate_layer,
+            selection_type="NEW_SELECTION"
+        )
+
+        arcpy.management.SelectLayerByAttribute(
+            neighbor_layer,
+            "REMOVE_FROM_SELECTION",
+            f"{oid_delim} = {oid}"
+        )
+
+        neighbor_locals = set()
+
+        with arcpy.da.SearchCursor(neighbor_layer, ["Local"]) as cursor:
+            for row in cursor:
+                if row[0] is not None:
+                    neighbor_locals.add(row[0])
+
+        if neighbor_locals == {target_local}:
+            selected_oids.append(oid)
+
+    for lyr in [candidate_layer, neighbor_layer]:
+        arcpy.management.Delete(lyr)
+
+    print(
+        f"Local={source_local} pequenos rodeados só por Local={target_local}: {len(selected_oids)}"
+    )
+
+    return selected_oids
+
+
+def eliminate_selected_oids(fc, oids, output_fc):
+    if not oids:
+        arcpy.management.CopyFeatures(fc, output_fc)
+        return
+
+    lyr = "elim_special_lyr"
+
+    if arcpy.Exists(lyr):
+        arcpy.management.Delete(lyr)
+
+    arcpy.management.MakeFeatureLayer(fc, lyr)
+
+    oid_field = arcpy.Describe(fc).OIDFieldName
+    oid_delim = arcpy.AddFieldDelimiters(fc, oid_field)
+
+    arcpy.management.SelectLayerByAttribute(lyr, "CLEAR_SELECTION")
+
+    chunks = [oids[i:i + 900] for i in range(0, len(oids), 900)]
+
+    for idx, chunk in enumerate(chunks):
+        oid_list = ",".join(map(str, chunk))
+        where = f"{oid_delim} IN ({oid_list})"
+        sel_type = "NEW_SELECTION" if idx == 0 else "ADD_TO_SELECTION"
+
+        arcpy.management.SelectLayerByAttribute(
+            lyr,
+            sel_type,
+            where
+        )
+
+    arcpy.management.Eliminate(
+        lyr,
+        output_fc,
+        "AREA"
+    )
+
+    arcpy.management.Delete(lyr)
+
+
+def apply_special_rule(fc_input, source_local, target_local, label):
+    fc_current = fc_input
+
+    for iteration in range(1, max_iterations + 1):
+        print(f"\nRegra especial {label} | Iteração {iteration}")
+
+        recalc_area(fc_current)
+
+        selected_oids = select_surrounded_by_local(
+            fc_current,
+            source_local,
+            target_local
+        )
+
+        if not selected_oids:
+            print(f"Não há mais Local={source_local} pequenos rodeados apenas por Local={target_local}.")
+            break
+
+        fc_next = os.path.join(
+            gdb_path,
+            f"special_l{source_local}_to_l{target_local}_iter_{iteration}"
+        )
+
+        if arcpy.Exists(fc_next):
+            arcpy.management.Delete(fc_next)
+
+        eliminate_selected_oids(
+            fc_current,
+            selected_oids,
+            fc_next
+        )
+
+        fc_current = fc_next
+
+    return fc_current
+
+
+# --------------------------------------------------
+# 1. PROCESSAR LOCAIS NA ORDEM DEFINIDA
+# --------------------------------------------------
+
+fc_local3 = process_local_same_local(3)
+fc_local1 = process_local_same_local(1)
+fc_local2 = process_local_same_local(2)
+
+# --------------------------------------------------
+# 2. MERGE DOS LOCAIS
+# --------------------------------------------------
+
+fc_merged = os.path.join(gdb_path, "stands_merged")
+
+if arcpy.Exists(fc_merged):
+    arcpy.management.Delete(fc_merged)
+
+print("\nA juntar Local 1 + Local 2 + Local 3...")
+
+arcpy.management.Merge(
+    [fc_local1, fc_local2, fc_local3],
+    fc_merged
+)
+
+recalc_area(fc_merged)
+
+# --------------------------------------------------
+# 3. REGRAS ESPECIAIS ENTRE LOCAIS
+# --------------------------------------------------
+
+fc_after_special = apply_special_rule(
+    fc_merged,
+    source_local=2,
+    target_local=1,
+    label="Local=2 rodeado por Local=1"
+)
+
+fc_after_special = apply_special_rule(
+    fc_after_special,
+    source_local=1,
+    target_local=3,
+    label="Local=1 rodeado por Local=3"
+)
+
+# --------------------------------------------------
+# 4. MULTIPART TO SINGLEPART FINAL
+# --------------------------------------------------
+
+fc_single_final = os.path.join(gdb_path, "stands_single_final")
+
+if arcpy.Exists(fc_single_final):
+    arcpy.management.Delete(fc_single_final)
+
+print("\nA aplicar Multipart To Singlepart no resultado final...")
+
+arcpy.management.MultipartToSinglepart(
+    fc_after_special,
+    fc_single_final
+)
+
+fc_final = fc_single_final
+
+# --------------------------------------------------
+# 5. RECALCULAR AREA_ha FINAL
+# --------------------------------------------------
+
+print("A recalcular AREA_ha final...")
+
+existing_fields = [f.name for f in arcpy.ListFields(fc_final)]
+
+if "AREA_ha" not in existing_fields:
+    arcpy.management.AddField(fc_final, "AREA_ha", "DOUBLE")
+
+recalc_area(fc_final)
+
+# --------------------------------------------------
+# 6. RECALCULAR Stand_IDv2
+# --------------------------------------------------
+
+print("A recalcular Stand_IDv2...")
+
+existing_fields = [f.name for f in arcpy.ListFields(fc_final)]
+
+if "Stand_IDv2" not in existing_fields:
+    arcpy.management.AddField(fc_final, "Stand_IDv2", "LONG")
+
+with arcpy.da.UpdateCursor(fc_final, ["Stand_IDv2"]) as cursor:
+    new_id = 1
+    for row in cursor:
+        row[0] = new_id
+        cursor.updateRow(row)
+        new_id += 1
+
+# --------------------------------------------------
+# 7. EXPORTAR SHAPEFILE FINAL
+# --------------------------------------------------
+
+print("A exportar shapefile final...")
+
+if arcpy.Exists(output_shp):
+    arcpy.management.Delete(output_shp)
+
+arcpy.conversion.FeatureClassToFeatureClass(
+    fc_final,
+    os.path.dirname(output_shp),
+    os.path.basename(output_shp)
+)
+
+print("\nPROCESSO CONCLUÍDO.")
+print(f"Output final: {output_shp}")
+print(f"Total de polígonos finais: {new_id - 1}")

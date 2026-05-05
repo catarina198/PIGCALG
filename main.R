@@ -75,6 +75,8 @@ stands_aglom_int_diss <- file.path(dir_aglomerados, "stands_aglom_int_diss.shp")
 stands_sem_aglomerado <- file.path(dir_aglomerados, "stands_sem_aglomerado.shp")
 shp_stands_interface_edf <- file.path(dir_aglomerados, "shp_stands_interface_edf.shp")
 
+#aglomerados na interface no gaps (feito à parte no arcgis)
+shp_stands_interface_edf_nogaps <- file.path(dir_aglomerados, "shp_stands_interface_edf_nogaps.shp")
 
 # Unidades Tratamento
 dir_unidades_tratamento <- file.path(dir_output_analise, "UTratamento")
@@ -138,7 +140,7 @@ tipo_valor_chave <- "valor_economico"  # "aglomerados", "valor_natural", "valor_
 # correcao_stands_final() -> limiar de eliminacao e modo verbose
 threshold_eliminate_ha_correcao <- 0.1
 verbose_correcao_stands_final <- TRUE
-n_cores_correcao <- 2
+n_cores_correcao <- 3
 progress_por_core_correcao <- TRUE
 
 # run_exposure_interface() e run_exposure_lcp() -> processamento paralelo
@@ -168,19 +170,19 @@ modo_execucao <- "funcao_especifica"
 # "correcao_stands_final", "run_exposure_interface", "run_exposure_lcp",
 # "update_stands_exposicao", "expo_values_correction", "informacao_UTs",
 # "prioridade_absoluta", "prioridade_relativa", "executar_bloco_donuts", "executar_bloco_exposicao"
-funcao_especifica <- "stands_edificado"
+funcao_especifica <- "correcao_stands_final"
 
 # Argumentos para a funcao especifica (deixar list() para usar defaults da funcao)
 args_funcao_especifica <- list(
-  shp_aglomerados_base = shp_aglomerados_base,
-  interface_diss_completa = interface_diss_completa,
-  stands_aglom_int = stands_aglom_int,
-  stands_aglom_int_diss = stands_aglom_int_diss,
-  stands_sem_aglomerado = stands_sem_aglomerado,
-  shp_stands_interface_edf = shp_stands_interface_edf,
-  shp_municipios_path = shp_municipios,
-  verbose = FALSE
-  )
+  shp_stands_interface_edf = shp_stands_interface_edf_nogaps,
+  shp_stands_interface_final = shp_stands_interface_final,
+  threshold_eliminate_ha = threshold_eliminate_ha_correcao,
+  max_small_iter = 10,
+  tolerancia_gap_m = 0.5,
+  n_cores_correcao = n_cores_correcao,
+  progress_por_core = progress_por_core_correcao,
+  verbose = verbose_correcao_stands_final
+)
 
 
 
