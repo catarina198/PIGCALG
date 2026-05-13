@@ -1,5 +1,87 @@
 ﻿## Funcoes extraidas de main_script_original_v2.R
 
+resolver_ficheiro_tempos_execucao <- function() {
+  if (exists("TEMPOS", inherits = TRUE)) {
+    return(get("TEMPOS", inherits = TRUE))
+  }
+  file.path(getwd(), "TEMPOS_EXECUCAO.txt")
+}
+
+formatar_duracao_hms <- function(difftime_obj) {
+  total_secs <- as.numeric(difftime_obj, units = "secs")
+  if (!is.finite(total_secs) || is.na(total_secs)) total_secs <- 0
+  total_secs <- max(0, round(total_secs))
+  horas <- total_secs %/% 3600
+  minutos <- (total_secs %% 3600) %/% 60
+  segundos <- total_secs %% 60
+  sprintf("%d:%02d:%02d", horas, minutos, segundos)
+}
+
+normalizar_outputs_para_texto <- function(outputs) {
+  if (is.null(outputs) || length(outputs) == 0) return("(sem output final)")
+  outputs_chr <- as.character(unlist(outputs, recursive = TRUE, use.names = FALSE))
+  outputs_chr <- outputs_chr[!is.na(outputs_chr) & nzchar(trimws(outputs_chr))]
+  if (length(outputs_chr) == 0) return("(sem output final)")
+  outputs_chr <- vapply(
+    outputs_chr,
+    function(p) normalizePath(p, winslash = "/", mustWork = FALSE),
+    character(1)
+  )
+  paste(outputs_chr, collapse = " | ")
+}
+
+iniciar_registo_tempo_funcao <- function(nome_funcao, outputs = NULL, ficheiro_tempos = NULL) {
+  if (is.null(ficheiro_tempos) || !nzchar(as.character(ficheiro_tempos))) {
+    ficheiro_tempos <- resolver_ficheiro_tempos_execucao()
+  }
+  list(
+    nome_funcao = as.character(nome_funcao),
+    inicio = Sys.time(),
+    outputs = outputs,
+    ficheiro_tempos = as.character(ficheiro_tempos)
+  )
+}
+
+finalizar_registo_tempo_funcao <- function(ctx) {
+  if (is.null(ctx) || !is.list(ctx) || is.null(ctx$inicio) || is.null(ctx$nome_funcao)) {
+    return(invisible(NULL))
+  }
+
+  fim <- Sys.time()
+  inicio <- as.POSIXct(ctx$inicio, origin = "1970-01-01", tz = "")
+  duracao_txt <- formatar_duracao_hms(fim - inicio)
+  output_txt <- normalizar_outputs_para_texto(ctx$outputs)
+  ficheiro <- as.character(ctx$ficheiro_tempos)[1]
+  if (is.na(ficheiro) || !nzchar(ficheiro)) {
+    ficheiro <- resolver_ficheiro_tempos_execucao()
+  }
+
+  dir.create(dirname(ficheiro), recursive = TRUE, showWarnings = FALSE)
+
+  linhas <- c(
+    "========================================",
+    as.character(ctx$nome_funcao)[1],
+    "========================================",
+    "",
+    paste0("Output final: ", output_txt),
+    "",
+    "----------------------------------------",
+    "DATA/HORA INICIO:",
+    format(inicio, "%Y-%m-%d %H:%M:%S"),
+    "",
+    "DATA/HORA FIM:",
+    format(fim, "%Y-%m-%d %H:%M:%S"),
+    "",
+    "DURACAO TOTAL:",
+    duracao_txt,
+    "----------------------------------------",
+    ""
+  )
+
+  cat(paste(linhas, collapse = "\n"), file = ficheiro, append = TRUE)
+  invisible(NULL)
+}
+
 ## # - CRIAR DONNUTS ####
 criar_donuts_valor_chave <- function(
   tipo_valor_chave,
@@ -18,6 +100,8 @@ criar_donuts_valor_chave <- function(
 ) {
   print("funcao criar_donuts_valor_chave iniciou")
   on.exit(print("funcao criar_donuts_valor_chave terminou"), add = TRUE)
+  timing_ctx <- iniciar_registo_tempo_funcao("criar_donuts_valor_chave")
+  on.exit(finalizar_registo_tempo_funcao(timing_ctx), add = TRUE)
 
   if (tipo_valor_chave == "aglomerados") {
     shp_valor_chave_base <- shp_aglomerados_base
@@ -37,6 +121,11 @@ criar_donuts_valor_chave <- function(
   } else {
     stop("tipo_valor_chave invalido.")
   }
+  timing_ctx$outputs <- c(
+    shp_valor_chave_0_100,
+    shp_valor_chave_100_500,
+    shp_valor_chave_500_1000
+  )
 
   pairwise_difference <- function(x, y) {
     if (length(x) != length(y)) {
@@ -304,6 +393,18 @@ stands_interface <- function(
 ) {
   print("funcao stands_interface iniciou")
   on.exit(print("funcao stands_interface terminou"), add = TRUE)
+  timing_ctx <- iniciar_registo_tempo_funcao(
+    "stands_interface",
+    outputs = c(
+      shp_interface_dissolve,
+      stands_interface_int,
+      stands_interface_diss,
+      stands_interface_final,
+      stands_erase_single,
+      interface_diss_completa
+    )
+  )
+  on.exit(finalizar_registo_tempo_funcao(timing_ctx), add = TRUE)
 
   quiet_mode <- !isTRUE(verbose)
 
@@ -838,6 +939,16 @@ stands_edificado <- function(
 ) {
   print("funcao stands_edificado iniciou")
   on.exit(print("funcao stands_edificado terminou"), add = TRUE)
+  timing_ctx <- iniciar_registo_tempo_funcao(
+    "stands_edificado",
+    outputs = c(
+      stands_aglom_int,
+      stands_aglom_int_diss,
+      stands_sem_aglomerado,
+      shp_stands_interface_edf
+    )
+  )
+  on.exit(finalizar_registo_tempo_funcao(timing_ctx), add = TRUE)
 
   quiet_mode <- !isTRUE(verbose)
 
@@ -1012,8 +1123,8 @@ stands_edificado <- function(
 
   shp_stands_interface_edf_sf$Uso_solo[idx_local3] <- ifelse(
     is.na(shp_stands_interface_edf_sf$TIPO_p[idx_local3]) | shp_stands_interface_edf_sf$TIPO_p[idx_local3] == -1,
-    "Área edificada",
-    paste0("Área edificada tipo_p ", shp_stands_interface_edf_sf$TIPO_p[idx_local3])
+    "Ãrea edificada",
+    paste0("Ãrea edificada tipo_p ", shp_stands_interface_edf_sf$TIPO_p[idx_local3])
   )
 
   ## =========================================================
@@ -1087,1091 +1198,1091 @@ stands_edificado <- function(
   invisible(shp_stands_interface_edf_sf)
 }
 
-correcao_stands_final <- function(
-  shp_stands_interface_edf = shp_stands_interface_edf,
-  shp_stands_interface_final = shp_stands_interface_final,
-  threshold_eliminate_ha,
-  max_small_iter = 10,
-  tolerancia_gap_m = 0.5,
-  n_cores_correcao = 1,
-  progress_por_core = TRUE,
-  verbose = FALSE
-) {
-  print("funcao correcao_stands_final iniciou")
-  on.exit(print("funcao correcao_stands_final terminou"), add = TRUE)
-
-  if (missing(threshold_eliminate_ha) || is.null(threshold_eliminate_ha)) {
-    stop("O parametro threshold_eliminate_ha e obrigatorio.")
-  }
-
-  threshold_eliminate_ha <- suppressWarnings(as.numeric(threshold_eliminate_ha))
-  if (is.na(threshold_eliminate_ha) || threshold_eliminate_ha <= 0) {
-    stop("threshold_eliminate_ha deve ser numerico e > 0.")
-  }
-  max_small_iter <- suppressWarnings(as.integer(max_small_iter))
-  if (is.na(max_small_iter) || max_small_iter < 1) {
-    stop("max_small_iter deve ser um inteiro >= 1.")
-  }
-  tolerancia_gap_m <- suppressWarnings(as.numeric(tolerancia_gap_m))
-  if (is.na(tolerancia_gap_m) || tolerancia_gap_m < 0) {
-    stop("tolerancia_gap_m deve ser numerico e >= 0.")
-  }
-  n_cores_correcao <- suppressWarnings(as.integer(n_cores_correcao))
-  if (is.na(n_cores_correcao) || n_cores_correcao < 1) {
-    stop("n_cores_correcao deve ser um inteiro >= 1.")
-  }
-  progress_por_core <- isTRUE(progress_por_core)
-
-  quiet_mode <- !isTRUE(verbose)
-  threshold_ha <- threshold_eliminate_ha
-  max_iter <- max_small_iter
-  abs_tol_m2 <- 1
-  rel_tol_area <- 1e-8
-
-  worker_state_path <- function(progress_dir, worker_id) {
-    file.path(progress_dir, sprintf("worker_%02d.rds", as.integer(worker_id)))
-  }
-
-  write_worker_state <- function(progress_dir, worker_id, state) {
-    if (is.null(progress_dir) || !nzchar(progress_dir)) return(invisible(NULL))
-    dir.create(progress_dir, recursive = TRUE, showWarnings = FALSE)
-    state$worker <- as.integer(worker_id)
-    state$updated_at <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
-    try(saveRDS(state, worker_state_path(progress_dir, worker_id)), silent = TRUE)
-    invisible(NULL)
-  }
-
-  read_worker_states <- function(progress_dir, n_workers) {
-    states <- vector("list", n_workers)
-    for (w in seq_len(n_workers)) {
-      p <- worker_state_path(progress_dir, w)
-      if (file.exists(p)) {
-        states[[w]] <- tryCatch(readRDS(p), error = function(e) NULL)
-      }
-      if (is.null(states[[w]])) {
-        states[[w]] <- list(
-          worker = w,
-          status = "idle",
-          stage = "-",
-          processados = 0L,
-          total = 0L,
-          agregados = 0L,
-          ignorados = 0L,
-          municipio = "-",
-          updated_at = "-"
-        )
-      }
-    }
-    states
-  }
-
-  print_worker_progress_table <- function(progress_dir, n_workers, title = "Progresso por worker") {
-    states <- read_worker_states(progress_dir, n_workers)
-    header <- sprintf(
-      "%-6s | %-10s | %-22s | %-13s | %-11s | %-10s | %-10s | %-16s",
-      "worker", "status", "stage", "processados", "agregados", "ignorados", "municipio", "atualizado"
-    )
-    sep <- paste(rep("-", nchar(header)), collapse = "")
-    cat("\n")
-    cat(title, "\n", sep, "\n", header, "\n", sep, "\n", sep = "")
-    for (s in states) {
-      proc_txt <- sprintf("%d/%d", as.integer(s$processados), as.integer(s$total))
-      cat(sprintf(
-        "%-6d | %-10s | %-22s | %-13s | %-11d | %-10d | %-10s | %-16s\n",
-        as.integer(s$worker),
-        as.character(s$status),
-        as.character(s$stage),
-        proc_txt,
-        as.integer(s$agregados),
-        as.integer(s$ignorados),
-        as.character(s$municipio),
-        as.character(s$updated_at)
-      ))
-    }
-    cat(sep, "\n")
-    flush.console()
-    invisible(NULL)
-  }
-
-  build_progress_callback <- function(progress_dir, worker_id, municipio_label = NA_character_) {
-    function(evt = list()) {
-      if (!is.list(evt)) evt <- list()
-      state <- list(
-        status = if (!is.null(evt$status)) as.character(evt$status) else "running",
-        stage = if (!is.null(evt$stage)) as.character(evt$stage) else "-",
-        processados = if (!is.null(evt$processados)) as.integer(evt$processados) else 0L,
-        total = if (!is.null(evt$total)) as.integer(evt$total) else 0L,
-        agregados = if (!is.null(evt$agregados)) as.integer(evt$agregados) else 0L,
-        ignorados = if (!is.null(evt$ignorados)) as.integer(evt$ignorados) else 0L,
-        municipio = if (!is.null(evt$municipio)) as.character(evt$municipio) else as.character(municipio_label)
-      )
-      write_worker_state(progress_dir, worker_id, state)
-
-      # Em alguns ambientes (Rterm/outfile = ""), esta linha aparece em tempo real.
-      cat(sprintf(
-        "[worker %d] %-10s | %-22s | %d/%d | agg=%d | ign=%d | %s\n",
-        as.integer(worker_id),
-        state$status,
-        state$stage,
-        state$processados,
-        state$total,
-        state$agregados,
-        state$ignorados,
-        state$municipio
-      ))
-      flush.console()
-      invisible(NULL)
-    }
-  }
-
-  dir.create(dirname(shp_stands_interface_final), recursive = TRUE, showWarnings = FALSE)
-
-  shp_stands_interface_edf_sf <- read_vector(
-    shp_stands_interface_edf,
-    layer = layer_shp_stands_interface_edf,
-    quiet = quiet_mode
-  )
-
-  required_stands <- c("Local", "municipio")
-  missing_stands <- setdiff(required_stands, names(shp_stands_interface_edf_sf))
-  if (length(missing_stands) > 0) {
-    stop(
-      paste(
-        "Faltam colunas obrigatorias em shp_stands_interface_edf:",
-        paste(missing_stands, collapse = ", ")
-      )
-    )
-  }
-
-  ## A) AGREGAR POLIGONOS PEQUENOS A VIZINHANCA COM sf
-  shp_stands_interface_final_sf <- st_make_valid(shp_stands_interface_edf_sf)
-
-  shp_stands_interface_final_sf <- st_collection_extract(
-    shp_stands_interface_final_sf,
-    "POLYGON"
-  )
-  shp_stands_interface_final_sf <- shp_stands_interface_final_sf[
-    !st_is_empty(shp_stands_interface_final_sf),
-  ]
-
-  shp_stands_interface_final_sf$AREA_ha <- as.numeric(
-    st_area(shp_stands_interface_final_sf)
-  ) / 10000
-
-  shp_stands_interface_final_sf <- shp_stands_interface_final_sf[
-    !is.na(shp_stands_interface_final_sf$AREA_ha) &
-      shp_stands_interface_final_sf$AREA_ha > 0,
-  ]
-
-  agregar_pequenos_sf <- function(
-    sf_obj,
-    threshold_ha = 0.1,
-    max_iter = 10,
-    verbose_mode = FALSE,
-    tolerancia_gap = 0.5,
-    progress_cb = NULL,
-    progress_stage = "agregar"
-  ) {
-    if (nrow(sf_obj) == 0) return(sf_obj)
-
-    sf_obj <- st_make_valid(sf_obj)
-    sf_obj <- st_collection_extract(sf_obj, "POLYGON")
-    sf_obj <- sf_obj[!st_is_empty(sf_obj), ]
-
-    normalizar_merge_geom <- function(geom_obj, crs_ref) {
-      extrair_geom <- function(x) {
-        if (is.null(x)) return(NULL)
-        if (inherits(x, "sf")) x <- st_geometry(x)
-        if (inherits(x, "sfc")) {
-          if (length(x) == 0) return(NULL)
-          return(x[[1]])
-        }
-        if (inherits(x, "sfg")) return(x)
-        NULL
-      }
-
-      g <- extrair_geom(geom_obj)
-      if (is.null(g)) return(NULL)
-
-      sf_tmp <- tryCatch(
-        st_as_sf(data.frame(.id = 1L), geometry = st_sfc(g, crs = crs_ref)),
-        error = function(e) NULL
-      )
-      if (is.null(sf_tmp)) return(NULL)
-
-      sf_tmp <- tryCatch(st_make_valid(sf_tmp), error = function(e) NULL)
-      if (is.null(sf_tmp)) return(NULL)
-
-      sf_tmp <- tryCatch(st_collection_extract(sf_tmp, "POLYGON"), error = function(e) NULL)
-      if (is.null(sf_tmp) || nrow(sf_tmp) == 0) return(NULL)
-
-      sf_tmp <- sf_tmp[!st_is_empty(sf_tmp), ]
-      if (nrow(sf_tmp) == 0) return(NULL)
-
-      sf_tmp <- tryCatch(st_cast(sf_tmp, "MULTIPOLYGON", warn = FALSE), error = function(e) NULL)
-      if (is.null(sf_tmp) || nrow(sf_tmp) == 0) return(NULL)
-
-      geom_all <- tryCatch(
-        st_union(st_geometry(sf_tmp)),
-        error = function(e) st_combine(st_geometry(sf_tmp))
-      )
-      if (is.null(geom_all) || length(geom_all) == 0) return(NULL)
-
-      sf_all <- tryCatch(
-        st_as_sf(data.frame(.id = 1L), geometry = st_sfc(geom_all[[1]], crs = crs_ref)),
-        error = function(e) NULL
-      )
-      if (is.null(sf_all)) return(NULL)
-      sf_all <- tryCatch(st_collection_extract(sf_all, "POLYGON"), error = function(e) NULL)
-      if (is.null(sf_all) || nrow(sf_all) == 0) return(NULL)
-      sf_all <- tryCatch(st_cast(sf_all, "MULTIPOLYGON", warn = FALSE), error = function(e) NULL)
-      if (is.null(sf_all) || nrow(sf_all) == 0) return(NULL)
-
-      g_out <- st_geometry(sf_all)
-      if (length(g_out) == 0) return(NULL)
-      g_out[[1]]
-    }
-
-    area_within_tol <- function(area_ref, area_new) {
-      if (!is.finite(area_ref) || !is.finite(area_new) || area_ref <= 0 || area_new <= 0) {
-        return(FALSE)
-      }
-      tol <- max(abs_tol_m2, rel_tol_area * max(area_ref, area_new))
-      abs(area_new - area_ref) <= tol
-    }
-
-    iter <- 0L
-    skipped_invalid_total <- 0L
-    skipped_area_total <- 0L
-    repeat {
-      iter <- iter + 1L
-
-      sf_obj$AREA_ha <- as.numeric(st_area(sf_obj)) / 10000
-      sf_obj$tmp_id <- seq_len(nrow(sf_obj))
-
-      ids_pequenos <- sf_obj$tmp_id[sf_obj$AREA_ha < threshold_ha]
-      n_small_now <- length(ids_pequenos)
-      removed_iter <- 0L
-      skipped_invalid_iter <- 0L
-      skipped_area_iter <- 0L
-      processed_iter <- 0L
-
-      if (isTRUE(verbose_mode)) {
-        cat(sprintf("Iteracao %d - poligonos pequenos: %d\n", iter, n_small_now))
-      }
-
-      if (n_small_now == 0) {
-        if (isTRUE(verbose_mode)) cat("Paragem: nao existem mais poligonos abaixo do limiar.\n")
-        break
-      }
-
-      if (iter > max_iter) {
-        if (isTRUE(verbose_mode)) cat("Paragem: atingido numero maximo de iteracoes.\n")
-        break
-      }
-
-      report_progress <- function() {
-        ignored_iter <- skipped_invalid_iter + skipped_area_iter
-        if (isTRUE(verbose_mode) && (processed_iter %% 250L == 0L || processed_iter == n_small_now)) {
-          cat(sprintf(
-            "Iteracao %d - processados: %d/%d | agregados: %d | ignorados: %d\n",
-            iter, processed_iter, n_small_now, removed_iter, ignored_iter
-          ))
-        }
-        if (is.function(progress_cb) && (processed_iter %% 250L == 0L || processed_iter == n_small_now)) {
-          progress_cb(list(
-            status = "running",
-            stage = sprintf("%s | iter %d", progress_stage, iter),
-            processados = processed_iter,
-            total = n_small_now,
-            agregados = removed_iter,
-            ignorados = ignored_iter
-          ))
-        }
-      }
-
-      for (id_small in ids_pequenos) {
-        processed_iter <- processed_iter + 1L
-        idx_small <- match(id_small, sf_obj$tmp_id)
-        if (is.na(idx_small)) {
-          report_progress()
-          next
-        }
-
-        feat_small <- sf_obj[idx_small, ]
-
-        idx_touch <- st_touches(feat_small, sf_obj)[[1]]
-        if (length(idx_touch) > 0) {
-          idx_candidatos <- idx_touch
-        } else {
-          idx_int <- st_intersects(feat_small, sf_obj)[[1]]
-          idx_int <- setdiff(idx_int, idx_small)
-          idx_candidatos <- idx_int
-        }
-
-        # Fallback final: vizinho mais proximo dentro da tolerancia para fechar micro-gaps
-        if (length(idx_candidatos) == 0 && tolerancia_gap > 0 && nrow(sf_obj) > 1) {
-          idx_all <- setdiff(seq_len(nrow(sf_obj)), idx_small)
-          d_all <- tryCatch(
-            suppressWarnings(as.numeric(st_distance(feat_small, sf_obj[idx_all, ], by_element = FALSE))),
-            error = function(e) rep(NA_real_, length(idx_all))
-          )
-          if (length(d_all) == length(idx_all)) {
-            ok <- which(!is.na(d_all) & d_all <= tolerancia_gap)
-            if (length(ok) > 0) {
-              idx_candidatos <- idx_all[ok]
-            }
-          }
-        }
-
-        if (length(idx_candidatos) == 0) {
-          report_progress()
-          next
-        }
-
-        vizinhos <- sf_obj[idx_candidatos, ]
-        vizinhos <- vizinhos[vizinhos$tmp_id != id_small, ]
-        if (nrow(vizinhos) == 0) {
-          report_progress()
-          next
-        }
-
-        vizinhos$AREA_ha_tmp <- as.numeric(st_area(vizinhos)) / 10000
-        vizinhos_grandes <- vizinhos[vizinhos$AREA_ha_tmp >= threshold_ha, ]
-        vizinhos_candidatos <- if (nrow(vizinhos_grandes) > 0) vizinhos_grandes else vizinhos
-
-        if (nrow(vizinhos_candidatos) == 1) {
-          id_best <- vizinhos_candidatos$tmp_id[1]
-          feat_best <- sf_obj[sf_obj$tmp_id == id_best, ]
-          geom_new <- tryCatch(st_union(feat_best, feat_small), error = function(e) NULL)
-        } else {
-          boundary_small <- tryCatch(st_boundary(feat_small), error = function(e) NULL)
-          border_len <- numeric(nrow(vizinhos_candidatos))
-          if (!is.null(boundary_small)) {
-            for (k in seq_len(nrow(vizinhos_candidatos))) {
-              border_len[k] <- tryCatch(
-                {
-                  inter_b <- suppressWarnings(
-                    st_intersection(
-                      boundary_small,
-                      st_boundary(vizinhos_candidatos[k, ])
-                    )
-                  )
-                  len_b <- suppressWarnings(st_length(inter_b))
-                  if (length(len_b) == 0) 0 else as.numeric(sum(len_b, na.rm = TRUE))
-                },
-                error = function(e) NA_real_
-              )
-            }
-          } else {
-            border_len[] <- NA_real_
-          }
-
-          vizinhos_candidatos$border_len <- border_len
-          vizinhos_com_aresta <- vizinhos_candidatos[
-            !is.na(vizinhos_candidatos$border_len) & vizinhos_candidatos$border_len > 0,
-          ]
-
-          if (nrow(vizinhos_com_aresta) > 0) {
-            idx_best <- which.max(vizinhos_com_aresta$border_len)
-            id_best <- vizinhos_com_aresta$tmp_id[idx_best]
-            feat_best <- sf_obj[sf_obj$tmp_id == id_best, ]
-            geom_new <- tryCatch(st_union(feat_best, feat_small), error = function(e) NULL)
-          } else {
-            if (tolerancia_gap <= 0) {
-              report_progress()
-              next
-            }
-            d_viz <- tryCatch(
-              suppressWarnings(as.numeric(st_distance(feat_small, vizinhos_candidatos, by_element = FALSE))),
-              error = function(e) rep(NA_real_, nrow(vizinhos_candidatos))
-            )
-            if (length(d_viz) != nrow(vizinhos_candidatos)) {
-              report_progress()
-              next
-            }
-            ok_d <- which(!is.na(d_viz) & d_viz <= tolerancia_gap)
-            if (length(ok_d) == 0) {
-              report_progress()
-              next
-            }
-
-            idx_best <- ok_d[which.min(d_viz[ok_d])]
-            id_best <- vizinhos_candidatos$tmp_id[idx_best]
-            feat_best <- sf_obj[sf_obj$tmp_id == id_best, ]
-
-            # Ponte geometrica minima para unir casos de contacto por ponto/micro-gap
-            bridge_tol <- max(tolerancia_gap / 2, 0.001)
-            geom_new <- tryCatch(
-              suppressWarnings(
-                st_union(
-                  st_buffer(feat_best, bridge_tol),
-                  st_buffer(feat_small, bridge_tol)
-                )
-              ),
-              error = function(e) NULL
-            )
-            geom_new <- tryCatch(
-              suppressWarnings(st_buffer(geom_new, -bridge_tol)),
-              error = function(e) NULL
-            )
-          }
-        }
-
-        geom_new_norm <- normalizar_merge_geom(geom_new, st_crs(sf_obj))
-        if (is.null(geom_new_norm)) {
-          skipped_invalid_iter <- skipped_invalid_iter + 1L
-          skipped_invalid_total <- skipped_invalid_total + 1L
-          report_progress()
-          next
-        }
-
-        area_ref <- tryCatch(as.numeric(st_area(st_as_sfc(geom_new, crs = st_crs(sf_obj)))), error = function(e) NA_real_)
-        area_new <- tryCatch(as.numeric(st_area(st_as_sfc(geom_new_norm, crs = st_crs(sf_obj)))), error = function(e) NA_real_)
-        if (!area_within_tol(area_ref, area_new)) {
-          skipped_area_iter <- skipped_area_iter + 1L
-          skipped_area_total <- skipped_area_total + 1L
-          report_progress()
-          next
-        }
-
-        sf_obj$geometry[sf_obj$tmp_id == id_best] <- st_sfc(
-          geom_new_norm,
-          crs = st_crs(sf_obj)
-        )
-        sf_obj <- sf_obj[sf_obj$tmp_id != id_small, ]
-        removed_iter <- removed_iter + 1L
-        report_progress()
-      }
-
-      sf_obj <- st_make_valid(sf_obj)
-      sf_obj <- sf_obj[!st_is_empty(sf_obj), ]
-      sf_obj <- st_collection_extract(sf_obj, "POLYGON")
-
-      if (isTRUE(verbose_mode) && skipped_invalid_iter > 0) {
-        cat(sprintf("Iteracao %d - agregacoes ignoradas por geometria invalida: %d\n", iter, skipped_invalid_iter))
-      }
-      if (isTRUE(verbose_mode) && skipped_area_iter > 0) {
-        cat(sprintf("Iteracao %d - agregacoes ignoradas por perda de area: %d\n", iter, skipped_area_iter))
-      }
-
-      if (removed_iter == 0) {
-        if (isTRUE(verbose_mode)) cat("Paragem: nenhuma agregacao na iteracao.\n")
-        break
-      }
-    }
-
-    if (isTRUE(verbose_mode) && skipped_invalid_total > 0) {
-      cat(sprintf("Total de agregacoes ignoradas por geometria invalida: %d\n", skipped_invalid_total))
-    }
-    if (isTRUE(verbose_mode) && skipped_area_total > 0) {
-      cat(sprintf("Total de agregacoes ignoradas por perda de area: %d\n", skipped_area_total))
-    }
-
-    if ("tmp_id" %in% names(sf_obj)) sf_obj$tmp_id <- NULL
-    if ("AREA_ha_tmp" %in% names(sf_obj)) sf_obj$AREA_ha_tmp <- NULL
-    if ("border_len" %in% names(sf_obj)) sf_obj$border_len <- NULL
-
-    sf_obj
-  }
-
-  rbind_sf_align <- function(sf_list, template_sf = NULL) {
-    sf_list <- Filter(function(x) !is.null(x) && inherits(x, "sf"), sf_list)
-    if (length(sf_list) == 0) {
-      if (!is.null(template_sf) && inherits(template_sf, "sf")) {
-        return(template_sf[0, , drop = FALSE])
-      }
-      return(NULL)
-    }
-
-    all_cols <- unique(unlist(lapply(sf_list, names), use.names = FALSE))
-    fill_missing_col <- function(col_name, n_rows) {
-      exemplar <- NULL
-      for (obj in sf_list) {
-        if (col_name %in% names(obj)) {
-          exemplar <- obj[[col_name]]
-          break
-        }
-      }
-      if (!is.null(exemplar) && (is.integer(exemplar) || is.numeric(exemplar))) {
-        return(rep(-1, n_rows))
-      }
-      rep(NA, n_rows)
-    }
-    sf_list <- lapply(sf_list, function(x) {
-      miss <- setdiff(all_cols, names(x))
-      if (length(miss) > 0) {
-        for (col in miss) x[[col]] <- fill_missing_col(col, nrow(x))
-      }
-      x[, all_cols, drop = FALSE]
-    })
-
-    do.call(rbind, sf_list)
-  }
-
-  agregar_local2_rodeado_local1 <- function(
-    local1_sf,
-    local2_sf,
-    local3_sf,
-    outros_sf,
-    threshold_ha,
-    verbose_mode = FALSE,
-    progress_cb = NULL,
-    progress_stage = "local2_rod_local1"
-  ) {
-    if (nrow(local1_sf) == 0 || nrow(local2_sf) == 0) {
-      return(list(
-        local1 = local1_sf,
-        local2 = local2_sf,
-        n_candidatos = 0L,
-        n_transferidos = 0L,
-        n_ignorados = 0L
-      ))
-    }
-
-    normalizar_merge_geom_local <- function(geom_obj, crs_ref) {
-      extrair_geom <- function(x) {
-        if (is.null(x)) return(NULL)
-        if (inherits(x, "sf")) x <- st_geometry(x)
-        if (inherits(x, "sfc")) {
-          if (length(x) == 0) return(NULL)
-          return(x[[1]])
-        }
-        if (inherits(x, "sfg")) return(x)
-        NULL
-      }
-
-      g <- extrair_geom(geom_obj)
-      if (is.null(g)) return(NULL)
-
-      sf_tmp <- tryCatch(
-        st_as_sf(data.frame(.id = 1L), geometry = st_sfc(g, crs = crs_ref)),
-        error = function(e) NULL
-      )
-      if (is.null(sf_tmp)) return(NULL)
-
-      sf_tmp <- tryCatch(st_make_valid(sf_tmp), error = function(e) NULL)
-      if (is.null(sf_tmp)) return(NULL)
-
-      sf_tmp <- tryCatch(st_collection_extract(sf_tmp, "POLYGON"), error = function(e) NULL)
-      if (is.null(sf_tmp) || nrow(sf_tmp) == 0) return(NULL)
-
-      sf_tmp <- sf_tmp[!st_is_empty(sf_tmp), ]
-      if (nrow(sf_tmp) == 0) return(NULL)
-
-      sf_tmp <- tryCatch(st_cast(sf_tmp, "MULTIPOLYGON", warn = FALSE), error = function(e) NULL)
-      if (is.null(sf_tmp) || nrow(sf_tmp) == 0) return(NULL)
-
-      geom_all <- tryCatch(
-        st_union(st_geometry(sf_tmp)),
-        error = function(e) st_combine(st_geometry(sf_tmp))
-      )
-      if (is.null(geom_all) || length(geom_all) == 0) return(NULL)
-
-      sf_all <- tryCatch(
-        st_as_sf(data.frame(.id = 1L), geometry = st_sfc(geom_all[[1]], crs = crs_ref)),
-        error = function(e) NULL
-      )
-      if (is.null(sf_all)) return(NULL)
-      sf_all <- tryCatch(st_collection_extract(sf_all, "POLYGON"), error = function(e) NULL)
-      if (is.null(sf_all) || nrow(sf_all) == 0) return(NULL)
-      sf_all <- tryCatch(st_cast(sf_all, "MULTIPOLYGON", warn = FALSE), error = function(e) NULL)
-      if (is.null(sf_all) || nrow(sf_all) == 0) return(NULL)
-
-      g_out <- st_geometry(sf_all)
-      if (length(g_out) == 0) return(NULL)
-      g_out[[1]]
-    }
-
-    area_within_tol_local <- function(area_ref, area_new) {
-      if (!is.finite(area_ref) || !is.finite(area_new) || area_ref <= 0 || area_new <= 0) {
-        return(FALSE)
-      }
-      tol <- max(abs_tol_m2, rel_tol_area * max(area_ref, area_new))
-      abs(area_new - area_ref) <= tol
-    }
-
-    local1_sf$.__l1_id <- seq_len(nrow(local1_sf))
-    local2_sf$.__l2_id <- seq_len(nrow(local2_sf))
-    local2_sf$AREA_ha <- as.numeric(st_area(local2_sf)) / 10000
-
-    ids_candidatos <- local2_sf$.__l2_id[
-      !is.na(local2_sf$AREA_ha) &
-        local2_sf$AREA_ha < threshold_ha
-    ]
-
-    n_candidatos <- length(ids_candidatos)
-    n_transferidos <- 0L
-    n_ignorados <- 0L
-    n_ignorados_area <- 0L
-    processed_iter <- 0L
-
-    if (isTRUE(verbose_mode)) {
-      cat(sprintf("Local 2 rodeado por Local 1 - candidatos: %d\n", n_candidatos))
-    }
-
-    for (cid in ids_candidatos) {
-      processed_iter <- processed_iter + 1L
-      if (isTRUE(verbose_mode) && (processed_iter %% 250L == 0L || processed_iter == n_candidatos)) {
-        cat(sprintf(
-          "Local 2 rodeado por Local 1 - processados: %d/%d | agregados: %d | ignorados: %d\n",
-          processed_iter, n_candidatos, n_transferidos, n_ignorados
-        ))
-      }
-      if (is.function(progress_cb) && (processed_iter %% 250L == 0L || processed_iter == n_candidatos)) {
-        progress_cb(list(
-          status = "running",
-          stage = progress_stage,
-          processados = processed_iter,
-          total = n_candidatos,
-          agregados = n_transferidos,
-          ignorados = n_ignorados
-        ))
-      }
-
-      idx_small <- match(cid, local2_sf$.__l2_id)
-      if (is.na(idx_small)) next
-
-      feat_small <- local2_sf[idx_small, ]
-
-      l1_ctx <- local1_sf
-      l2_ctx <- local2_sf
-      l3_ctx <- local3_sf
-      out_ctx <- outros_sf
-
-      l1_ctx$.__ctx_local <- rep(1L, nrow(l1_ctx))
-      l2_ctx$.__ctx_local <- rep(2L, nrow(l2_ctx))
-      l3_ctx$.__ctx_local <- rep(3L, nrow(l3_ctx))
-      out_ctx$.__ctx_local <- rep(99L, nrow(out_ctx))
-
-      if (!".__l1_id" %in% names(l2_ctx)) l2_ctx$.__l1_id <- rep(NA_integer_, nrow(l2_ctx))
-      if (!".__l1_id" %in% names(l3_ctx)) l3_ctx$.__l1_id <- rep(NA_integer_, nrow(l3_ctx))
-      if (!".__l1_id" %in% names(out_ctx)) out_ctx$.__l1_id <- rep(NA_integer_, nrow(out_ctx))
-
-      if (!".__l2_id" %in% names(l1_ctx)) l1_ctx$.__l2_id <- rep(NA_integer_, nrow(l1_ctx))
-      if (!".__l2_id" %in% names(l3_ctx)) l3_ctx$.__l2_id <- rep(NA_integer_, nrow(l3_ctx))
-      if (!".__l2_id" %in% names(out_ctx)) out_ctx$.__l2_id <- rep(NA_integer_, nrow(out_ctx))
-
-      contexto <- rbind_sf_align(
-        list(l1_ctx, l2_ctx, l3_ctx, out_ctx),
-        template_sf = l1_ctx
-      )
-      if (is.null(contexto)) next
-
-      idx_ctx_small <- which(contexto$.__ctx_local == 2L & contexto$.__l2_id == cid)
-      if (length(idx_ctx_small) != 1) next
-      idx_ctx_small <- idx_ctx_small[1]
-
-      idx_viz <- tryCatch(st_touches(contexto[idx_ctx_small, ], contexto)[[1]], error = function(e) integer(0))
-      idx_viz <- setdiff(idx_viz, idx_ctx_small)
-      if (length(idx_viz) == 0) {
-        idx_viz <- tryCatch(st_intersects(contexto[idx_ctx_small, ], contexto)[[1]], error = function(e) integer(0))
-        idx_viz <- setdiff(idx_viz, idx_ctx_small)
-      }
-      if (length(idx_viz) == 0) next
-
-      if (!all(contexto$.__ctx_local[idx_viz] == 1L, na.rm = TRUE)) next
-
-      idx_viz_l1 <- idx_viz[contexto$.__ctx_local[idx_viz] == 1L]
-      if (length(idx_viz_l1) == 0) next
-
-      boundary_small <- tryCatch(st_boundary(feat_small), error = function(e) NULL)
-      if (is.null(boundary_small)) {
-        n_ignorados <- n_ignorados + 1L
-        next
-      }
-
-      border_len <- rep(NA_real_, length(idx_viz_l1))
-      for (k in seq_along(idx_viz_l1)) {
-        border_len[k] <- tryCatch(
-          {
-            inter_b <- suppressWarnings(
-              st_intersection(
-                boundary_small,
-                st_boundary(contexto[idx_viz_l1[k], ])
-              )
-            )
-            len_b <- suppressWarnings(st_length(inter_b))
-            if (length(len_b) == 0) 0 else as.numeric(sum(len_b, na.rm = TRUE))
-          },
-          error = function(e) NA_real_
-        )
-      }
-
-      if (all(is.na(border_len)) || all(border_len <= 0, na.rm = TRUE)) {
-        n_ignorados <- n_ignorados + 1L
-        next
-      }
-
-      idx_best_ctx <- idx_viz_l1[which.max(ifelse(is.na(border_len), -Inf, border_len))]
-      id_dest_l1 <- contexto$.__l1_id[idx_best_ctx]
-      idx_dest <- match(id_dest_l1, local1_sf$.__l1_id)
-      if (is.na(idx_dest)) {
-        n_ignorados <- n_ignorados + 1L
-        next
-      }
-
-      feat_dest <- local1_sf[idx_dest, ]
-      geom_new <- tryCatch(st_union(feat_dest, feat_small), error = function(e) NULL)
-      geom_new_norm <- normalizar_merge_geom_local(geom_new, st_crs(local1_sf))
-      if (is.null(geom_new_norm)) {
-        n_ignorados <- n_ignorados + 1L
-        next
-      }
-
-      area_ref <- tryCatch(as.numeric(st_area(st_as_sfc(geom_new, crs = st_crs(local1_sf)))), error = function(e) NA_real_)
-      area_new <- tryCatch(as.numeric(st_area(st_as_sfc(geom_new_norm, crs = st_crs(local1_sf)))), error = function(e) NA_real_)
-      if (!area_within_tol_local(area_ref, area_new)) {
-        n_ignorados <- n_ignorados + 1L
-        n_ignorados_area <- n_ignorados_area + 1L
-        next
-      }
-
-      local1_sf$geometry[idx_dest] <- st_sfc(geom_new_norm, crs = st_crs(local1_sf))
-      local2_sf <- local2_sf[local2_sf$.__l2_id != cid, ]
-      n_transferidos <- n_transferidos + 1L
-    }
-
-    local1_sf$.__l1_id <- NULL
-    if (".__l2_id" %in% names(local1_sf)) local1_sf$.__l2_id <- NULL
-    if (".__ctx_local" %in% names(local1_sf)) local1_sf$.__ctx_local <- NULL
-
-    if (".__l2_id" %in% names(local2_sf)) local2_sf$.__l2_id <- NULL
-    if (".__l1_id" %in% names(local2_sf)) local2_sf$.__l1_id <- NULL
-    if (".__ctx_local" %in% names(local2_sf)) local2_sf$.__ctx_local <- NULL
-
-    if (isTRUE(verbose_mode)) {
-      cat(sprintf(
-        "Local 2 rodeado por Local 1 - agregados: %d | ignorados: %d | ignorados_perda_area: %d\n",
-        n_transferidos,
-        n_ignorados,
-        n_ignorados_area
-      ))
-    }
-
-    list(
-      local1 = local1_sf,
-      local2 = local2_sf,
-      n_candidatos = as.integer(n_candidatos),
-      n_transferidos = as.integer(n_transferidos),
-      n_ignorados = as.integer(n_ignorados)
-    )
-  }
-
-  processar_subset_correcao <- function(sf_subset, verbose_mode = FALSE, progress_cb = NULL) {
-    if (nrow(sf_subset) == 0) return(sf_subset)
-
-    local1 <- sf_subset[
-      !is.na(sf_subset$Local) &
-        sf_subset$Local == 1,
-    ]
-    local2 <- sf_subset[
-      !is.na(sf_subset$Local) &
-        sf_subset$Local == 2,
-    ]
-    local3 <- sf_subset[
-      !is.na(sf_subset$Local) &
-        sf_subset$Local == 3,
-    ]
-    outros <- sf_subset[
-      is.na(sf_subset$Local) |
-        !(sf_subset$Local %in% c(1, 2, 3)),
-    ]
-
-    local3_corr <- local3
-    if (is.function(progress_cb)) {
-      progress_cb(list(status = "running", stage = "inicio", processados = 0L, total = nrow(sf_subset), agregados = 0L, ignorados = 0L))
-    }
-    for (iter_global in seq_len(max_small_iter)) {
-      if (isTRUE(verbose_mode)) {
-        cat(sprintf("Iteracao global %d/%d\n", iter_global, max_small_iter))
-      }
-
-      local1_before_n <- nrow(local1)
-      local2_before_n <- nrow(local2)
-      if (nrow(local1) > 0) {
-        if (isTRUE(verbose_mode)) cat("Processar Local 1\n")
-        local1_corr <- agregar_pequenos_sf(
-          local1,
-          threshold_ha = threshold_ha,
-          max_iter = max_small_iter,
-          verbose_mode = verbose_mode,
-          tolerancia_gap = tolerancia_gap_m,
-          progress_cb = progress_cb,
-          progress_stage = sprintf("local1 | iter_global %d", iter_global)
-        )
-      } else {
-        local1_corr <- local1
-      }
-
-      transf_local2_l1 <- agregar_local2_rodeado_local1(
-        local1_sf = local1_corr,
-        local2_sf = local2,
-        local3_sf = local3,
-        outros_sf = outros,
-        threshold_ha = threshold_ha,
-        verbose_mode = verbose_mode,
-        progress_cb = progress_cb,
-        progress_stage = sprintf("local2_rod_local1 | iter_global %d", iter_global)
-      )
-
-      local1_corr <- transf_local2_l1$local1
-      local2_after_transfer <- transf_local2_l1$local2
-      n_transferidos <- as.integer(transf_local2_l1$n_transferidos)
-
-      if (nrow(local2_after_transfer) > 0) {
-        if (isTRUE(verbose_mode)) cat("Processar Local 2\n")
-        local2_corr <- agregar_pequenos_sf(
-          local2_after_transfer,
-          threshold_ha = threshold_ha,
-          max_iter = max_small_iter,
-          verbose_mode = verbose_mode,
-          tolerancia_gap = tolerancia_gap_m,
-          progress_cb = progress_cb,
-          progress_stage = sprintf("local2 | iter_global %d", iter_global)
-        )
-      } else {
-        local2_corr <- local2_after_transfer
-      }
-
-      delta_local1 <- as.integer(local1_before_n - nrow(local1_corr))
-      delta_local2 <- as.integer(local2_before_n - nrow(local2_corr))
-
-      if (isTRUE(verbose_mode)) {
-        cat(sprintf(
-          "Iteracao global %d - delta_local1: %d | delta_local2: %d | transferidos_l2_l1: %d\n",
-          iter_global, delta_local1, delta_local2, n_transferidos
-        ))
-      }
-      if (is.function(progress_cb)) {
-        progress_cb(list(
-          status = "running",
-          stage = sprintf("iter_global %d/%d", iter_global, max_small_iter),
-          processados = iter_global,
-          total = max_small_iter,
-          agregados = delta_local1 + delta_local2 + n_transferidos,
-          ignorados = 0L
-        ))
-      }
-
-      local1 <- local1_corr
-      local2 <- local2_corr
-
-      if (delta_local1 == 0L && delta_local2 == 0L && n_transferidos == 0L) {
-        if (isTRUE(verbose_mode)) {
-          cat("Paragem global: estabilizacao (sem alteracoes).\n")
-        }
-        break
-      }
-
-      if (iter_global >= max_small_iter && isTRUE(verbose_mode)) {
-        cat(sprintf("Paragem global: atingido limite maximo (%d).\n", max_small_iter))
-      }
-    }
-
-    sf_out <- rbind_sf_align(
-      list(local1, local2, local3_corr, outros),
-      template_sf = sf_subset
-    )
-    if (is.null(sf_out)) sf_out <- sf_subset[0, , drop = FALSE]
-    if (is.function(progress_cb)) {
-      progress_cb(list(status = "concluido", stage = "fim", processados = max_small_iter, total = max_small_iter, agregados = 0L, ignorados = 0L))
-    }
-    sf_out
-  }
-
-  municipio_norm <- trimws(as.character(shp_stands_interface_final_sf$municipio))
-  municipio_norm[is.na(municipio_norm) | !nzchar(municipio_norm)] <- "__SEM_MUNICIPIO__"
-  municipios <- sort(unique(municipio_norm))
-  idx_por_municipio <- lapply(municipios, function(m) which(municipio_norm == m))
-  names(idx_por_municipio) <- municipios
-
-  if (isTRUE(verbose)) {
-    cat(sprintf(
-      "Correcao por municipio - grupos: %d | n_cores_correcao: %d\n",
-      length(municipios),
-      n_cores_correcao
-    ))
-  }
-
-  resultados_subsets <- list()
-  progress_dir <- NULL
-  if (length(municipios) > 0) {
-    if (n_cores_correcao == 1L || length(municipios) == 1L) {
-      resultados_subsets <- vector("list", length(municipios))
-      for (i in seq_along(municipios)) {
-        if (isTRUE(verbose)) {
-          cat(sprintf(
-            "Processar municipio: %s (%d/%d)\n",
-            municipios[i],
-            i,
-            length(municipios)
-          ))
-        }
-        idx_i <- idx_por_municipio[[i]]
-        sf_i <- shp_stands_interface_final_sf[idx_i, , drop = FALSE]
-        resultados_subsets[[i]] <- processar_subset_correcao(
-          sf_subset = sf_i,
-          verbose_mode = verbose
-        )
-      }
-    } else {
-      n_workers <- min(n_cores_correcao, length(municipios))
-      if (isTRUE(verbose)) {
-        cat(sprintf("Correcao por municipio em paralelo com %d workers.\n", n_workers))
-      }
-
-      progress_enabled <- isTRUE(verbose) && isTRUE(progress_por_core)
-      if (progress_enabled) {
-        progress_dir <- file.path(
-          tempdir(),
-          paste0("correcao_progress_", format(Sys.time(), "%Y%m%d_%H%M%S"), "_", Sys.getpid())
-        )
-        dir.create(progress_dir, recursive = TRUE, showWarnings = FALSE)
-        for (w in seq_len(n_workers)) {
-          write_worker_state(progress_dir, w, list(
-            status = "idle",
-            stage = "aguardar",
-            processados = 0L,
-            total = 0L,
-            agregados = 0L,
-            ignorados = 0L,
-            municipio = "-"
-          ))
-        }
-        print_worker_progress_table(progress_dir, n_workers, title = "Progresso por worker (inicio)")
-      }
-
-      cl <- if (progress_enabled) {
-        makeCluster(n_workers, type = "SOCK", outfile = "")
-      } else {
-        makeCluster(n_workers, type = "SOCK")
-      }
-      on.exit(stopCluster(cl), add = TRUE)
-      registerDoSNOW(cl)
-      on.exit(registerDoSEQ(), add = TRUE)
-
-      progress <- function(n) NULL
-      if (isTRUE(verbose)) {
-        pb <- txtProgressBar(min = 0, max = length(municipios), style = 3)
-        on.exit(try(close(pb), silent = TRUE), add = TRUE)
-        progress <- function(n) {
-          setTxtProgressBar(pb, n)
-          if (n >= length(municipios)) cat("\n")
-          flush.console()
-        }
-      }
-      opts_snow <- list(progress = function(n) {
-        progress(n)
-        if (progress_enabled) {
-          print_worker_progress_table(progress_dir, n_workers, title = sprintf("Progresso por worker (tarefas concluidas: %d/%d)", n, length(municipios)))
-        }
-      })
-
-      resultados_subsets <- foreach(
-        i = seq_along(municipios),
-        .packages = c("sf"),
-        .options.snow = opts_snow,
-        .export = c(
-          "processar_subset_correcao",
-          "agregar_pequenos_sf",
-          "agregar_local2_rodeado_local1",
-          "rbind_sf_align",
-          "build_progress_callback",
-          "write_worker_state",
-          "threshold_ha",
-          "max_small_iter",
-          "tolerancia_gap_m",
-          "max_iter",
-          "idx_por_municipio",
-          "shp_stands_interface_final_sf",
-          "progress_dir",
-          "n_workers",
-          "municipios"
-        )
-      ) %dopar% {
-        idx_i <- idx_por_municipio[[i]]
-        sf_i <- shp_stands_interface_final_sf[idx_i, , drop = FALSE]
-        worker_id <- ((i - 1L) %% n_workers) + 1L
-        cb <- NULL
-        if (!is.null(progress_dir) && nzchar(progress_dir)) {
-          cb <- build_progress_callback(
-            progress_dir = progress_dir,
-            worker_id = worker_id,
-            municipio_label = municipios[i]
-          )
-          cb(list(status = "running", stage = "arranque", processados = 0L, total = nrow(sf_i), agregados = 0L, ignorados = 0L))
-        }
-        processar_subset_correcao(
-          sf_subset = sf_i,
-          verbose_mode = FALSE,
-          progress_cb = cb
-        )
-      }
-
-      if (progress_enabled) {
-        print_worker_progress_table(progress_dir, n_workers, title = "Progresso por worker (fim)")
-      }
-    }
-  }
-
-  shp_stands_interface_final_sf <- rbind_sf_align(
-    resultados_subsets,
-    template_sf = shp_stands_interface_edf_sf
-  )
-  if (is.null(shp_stands_interface_final_sf)) {
-    shp_stands_interface_final_sf <- shp_stands_interface_edf_sf[0, ]
-  }
-
-  shp_stands_interface_final_sf <- st_make_valid(shp_stands_interface_final_sf)
-  shp_stands_interface_final_sf <- shp_stands_interface_final_sf[
-    !st_is_empty(shp_stands_interface_final_sf),
-  ]
-  shp_stands_interface_final_sf <- st_collection_extract(
-    shp_stands_interface_final_sf,
-    "POLYGON"
-  )
-  shp_stands_interface_final_sf <- st_cast(
-    shp_stands_interface_final_sf,
-    "POLYGON",
-    warn = FALSE
-  )
-
-  ## G) RECALCULAR AREA_ha E NOVO ID
-  shp_stands_interface_final_sf$AREA_ha <- as.numeric(
-    st_area(shp_stands_interface_final_sf)
-  ) / 10000
-
-  shp_stands_interface_final_sf <- shp_stands_interface_final_sf[
-    !is.na(shp_stands_interface_final_sf$AREA_ha) &
-      shp_stands_interface_final_sf$AREA_ha > 0,
-  ]
-
-  shp_stands_interface_final_sf$Stand_IDv2 <- seq_len(nrow(shp_stands_interface_final_sf))
-
-  ## H) CONFERIR
-  table(shp_stands_interface_final_sf$Local, useNA = "ifany")
-  table(st_geometry_type(shp_stands_interface_final_sf))
-  summary(shp_stands_interface_final_sf$AREA_ha)
-  n_abaixo_limite <- sum(shp_stands_interface_final_sf$AREA_ha < threshold_ha, na.rm = TRUE)
-  cat(
-    sprintf(
-      "Poligonos abaixo do limite (< %.6f ha): %d\n",
-      threshold_ha,
-      as.integer(n_abaixo_limite)
-    )
-  )
-
-  ## I) GUARDAR
-  write_vector(
-    shp_stands_interface_final_sf,
-    shp_stands_interface_final,
-    layer = layer_shp_stands_interface_final,
-    quiet = quiet_mode
-  )
-
-  invisible(shp_stands_interface_final_sf)
-}
+# correcao_stands_final <- function(
+#   shp_stands_interface_edf = shp_stands_interface_edf,
+#   shp_stands_interface_final = shp_stands_interface_final,
+#   threshold_eliminate_ha,
+#   max_small_iter = 10,
+#   tolerancia_gap_m = 0.5,
+#   n_cores_correcao = 1,
+#   progress_por_core = TRUE,
+#   verbose = FALSE
+# ) {
+#   print("funcao correcao_stands_final iniciou")
+#   on.exit(print("funcao correcao_stands_final terminou"), add = TRUE)
+#
+#   if (missing(threshold_eliminate_ha) || is.null(threshold_eliminate_ha)) {
+#     stop("O parametro threshold_eliminate_ha e obrigatorio.")
+#   }
+#
+#   threshold_eliminate_ha <- suppressWarnings(as.numeric(threshold_eliminate_ha))
+#   if (is.na(threshold_eliminate_ha) || threshold_eliminate_ha <= 0) {
+#     stop("threshold_eliminate_ha deve ser numerico e > 0.")
+#   }
+#   max_small_iter <- suppressWarnings(as.integer(max_small_iter))
+#   if (is.na(max_small_iter) || max_small_iter < 1) {
+#     stop("max_small_iter deve ser um inteiro >= 1.")
+#   }
+#   tolerancia_gap_m <- suppressWarnings(as.numeric(tolerancia_gap_m))
+#   if (is.na(tolerancia_gap_m) || tolerancia_gap_m < 0) {
+#     stop("tolerancia_gap_m deve ser numerico e >= 0.")
+#   }
+#   n_cores_correcao <- suppressWarnings(as.integer(n_cores_correcao))
+#   if (is.na(n_cores_correcao) || n_cores_correcao < 1) {
+#     stop("n_cores_correcao deve ser um inteiro >= 1.")
+#   }
+#   progress_por_core <- isTRUE(progress_por_core)
+#
+#   quiet_mode <- !isTRUE(verbose)
+#   threshold_ha <- threshold_eliminate_ha
+#   max_iter <- max_small_iter
+#   abs_tol_m2 <- 1
+#   rel_tol_area <- 1e-8
+#
+#   worker_state_path <- function(progress_dir, worker_id) {
+#     file.path(progress_dir, sprintf("worker_%02d.rds", as.integer(worker_id)))
+#   }
+#
+#   write_worker_state <- function(progress_dir, worker_id, state) {
+#     if (is.null(progress_dir) || !nzchar(progress_dir)) return(invisible(NULL))
+#     dir.create(progress_dir, recursive = TRUE, showWarnings = FALSE)
+#     state$worker <- as.integer(worker_id)
+#     state$updated_at <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
+#     try(saveRDS(state, worker_state_path(progress_dir, worker_id)), silent = TRUE)
+#     invisible(NULL)
+#   }
+#
+#   read_worker_states <- function(progress_dir, n_workers) {
+#     states <- vector("list", n_workers)
+#     for (w in seq_len(n_workers)) {
+#       p <- worker_state_path(progress_dir, w)
+#       if (file.exists(p)) {
+#         states[[w]] <- tryCatch(readRDS(p), error = function(e) NULL)
+#       }
+#       if (is.null(states[[w]])) {
+#         states[[w]] <- list(
+#           worker = w,
+#           status = "idle",
+#           stage = "-",
+#           processados = 0L,
+#           total = 0L,
+#           agregados = 0L,
+#           ignorados = 0L,
+#           municipio = "-",
+#           updated_at = "-"
+#         )
+#       }
+#     }
+#     states
+#   }
+#
+#   print_worker_progress_table <- function(progress_dir, n_workers, title = "Progresso por worker") {
+#     states <- read_worker_states(progress_dir, n_workers)
+#     header <- sprintf(
+#       "%-6s | %-10s | %-22s | %-13s | %-11s | %-10s | %-10s | %-16s",
+#       "worker", "status", "stage", "processados", "agregados", "ignorados", "municipio", "atualizado"
+#     )
+#     sep <- paste(rep("-", nchar(header)), collapse = "")
+#     cat("\n")
+#     cat(title, "\n", sep, "\n", header, "\n", sep, "\n", sep = "")
+#     for (s in states) {
+#       proc_txt <- sprintf("%d/%d", as.integer(s$processados), as.integer(s$total))
+#       cat(sprintf(
+#         "%-6d | %-10s | %-22s | %-13s | %-11d | %-10d | %-10s | %-16s\n",
+#         as.integer(s$worker),
+#         as.character(s$status),
+#         as.character(s$stage),
+#         proc_txt,
+#         as.integer(s$agregados),
+#         as.integer(s$ignorados),
+#         as.character(s$municipio),
+#         as.character(s$updated_at)
+#       ))
+#     }
+#     cat(sep, "\n")
+#     flush.console()
+#     invisible(NULL)
+#   }
+#
+#   build_progress_callback <- function(progress_dir, worker_id, municipio_label = NA_character_) {
+#     function(evt = list()) {
+#       if (!is.list(evt)) evt <- list()
+#       state <- list(
+#         status = if (!is.null(evt$status)) as.character(evt$status) else "running",
+#         stage = if (!is.null(evt$stage)) as.character(evt$stage) else "-",
+#         processados = if (!is.null(evt$processados)) as.integer(evt$processados) else 0L,
+#         total = if (!is.null(evt$total)) as.integer(evt$total) else 0L,
+#         agregados = if (!is.null(evt$agregados)) as.integer(evt$agregados) else 0L,
+#         ignorados = if (!is.null(evt$ignorados)) as.integer(evt$ignorados) else 0L,
+#         municipio = if (!is.null(evt$municipio)) as.character(evt$municipio) else as.character(municipio_label)
+#       )
+#       write_worker_state(progress_dir, worker_id, state)
+#
+#       # Em alguns ambientes (Rterm/outfile = ""), esta linha aparece em tempo real.
+#       cat(sprintf(
+#         "[worker %d] %-10s | %-22s | %d/%d | agg=%d | ign=%d | %s\n",
+#         as.integer(worker_id),
+#         state$status,
+#         state$stage,
+#         state$processados,
+#         state$total,
+#         state$agregados,
+#         state$ignorados,
+#         state$municipio
+#       ))
+#       flush.console()
+#       invisible(NULL)
+#     }
+#   }
+#
+#   dir.create(dirname(shp_stands_interface_final), recursive = TRUE, showWarnings = FALSE)
+#
+#   shp_stands_interface_edf_sf <- read_vector(
+#     shp_stands_interface_edf,
+#     layer = layer_shp_stands_interface_edf,
+#     quiet = quiet_mode
+#   )
+#
+#   required_stands <- c("Local", "municipio")
+#   missing_stands <- setdiff(required_stands, names(shp_stands_interface_edf_sf))
+#   if (length(missing_stands) > 0) {
+#     stop(
+#       paste(
+#         "Faltam colunas obrigatorias em shp_stands_interface_edf:",
+#         paste(missing_stands, collapse = ", ")
+#       )
+#     )
+#   }
+#
+#   ## A) AGREGAR POLIGONOS PEQUENOS A VIZINHANCA COM sf
+#   shp_stands_interface_final_sf <- st_make_valid(shp_stands_interface_edf_sf)
+#
+#   shp_stands_interface_final_sf <- st_collection_extract(
+#     shp_stands_interface_final_sf,
+#     "POLYGON"
+#   )
+#   shp_stands_interface_final_sf <- shp_stands_interface_final_sf[
+#     !st_is_empty(shp_stands_interface_final_sf),
+#   ]
+#
+#   shp_stands_interface_final_sf$AREA_ha <- as.numeric(
+#     st_area(shp_stands_interface_final_sf)
+#   ) / 10000
+#
+#   shp_stands_interface_final_sf <- shp_stands_interface_final_sf[
+#     !is.na(shp_stands_interface_final_sf$AREA_ha) &
+#       shp_stands_interface_final_sf$AREA_ha > 0,
+#   ]
+#
+#   agregar_pequenos_sf <- function(
+#     sf_obj,
+#     threshold_ha = 0.1,
+#     max_iter = 10,
+#     verbose_mode = FALSE,
+#     tolerancia_gap = 0.5,
+#     progress_cb = NULL,
+#     progress_stage = "agregar"
+#   ) {
+#     if (nrow(sf_obj) == 0) return(sf_obj)
+#
+#     sf_obj <- st_make_valid(sf_obj)
+#     sf_obj <- st_collection_extract(sf_obj, "POLYGON")
+#     sf_obj <- sf_obj[!st_is_empty(sf_obj), ]
+#
+#     normalizar_merge_geom <- function(geom_obj, crs_ref) {
+#       extrair_geom <- function(x) {
+#         if (is.null(x)) return(NULL)
+#         if (inherits(x, "sf")) x <- st_geometry(x)
+#         if (inherits(x, "sfc")) {
+#           if (length(x) == 0) return(NULL)
+#           return(x[[1]])
+#         }
+#         if (inherits(x, "sfg")) return(x)
+#         NULL
+#       }
+#
+#       g <- extrair_geom(geom_obj)
+#       if (is.null(g)) return(NULL)
+#
+#       sf_tmp <- tryCatch(
+#         st_as_sf(data.frame(.id = 1L), geometry = st_sfc(g, crs = crs_ref)),
+#         error = function(e) NULL
+#       )
+#       if (is.null(sf_tmp)) return(NULL)
+#
+#       sf_tmp <- tryCatch(st_make_valid(sf_tmp), error = function(e) NULL)
+#       if (is.null(sf_tmp)) return(NULL)
+#
+#       sf_tmp <- tryCatch(st_collection_extract(sf_tmp, "POLYGON"), error = function(e) NULL)
+#       if (is.null(sf_tmp) || nrow(sf_tmp) == 0) return(NULL)
+#
+#       sf_tmp <- sf_tmp[!st_is_empty(sf_tmp), ]
+#       if (nrow(sf_tmp) == 0) return(NULL)
+#
+#       sf_tmp <- tryCatch(st_cast(sf_tmp, "MULTIPOLYGON", warn = FALSE), error = function(e) NULL)
+#       if (is.null(sf_tmp) || nrow(sf_tmp) == 0) return(NULL)
+#
+#       geom_all <- tryCatch(
+#         st_union(st_geometry(sf_tmp)),
+#         error = function(e) st_combine(st_geometry(sf_tmp))
+#       )
+#       if (is.null(geom_all) || length(geom_all) == 0) return(NULL)
+#
+#       sf_all <- tryCatch(
+#         st_as_sf(data.frame(.id = 1L), geometry = st_sfc(geom_all[[1]], crs = crs_ref)),
+#         error = function(e) NULL
+#       )
+#       if (is.null(sf_all)) return(NULL)
+#       sf_all <- tryCatch(st_collection_extract(sf_all, "POLYGON"), error = function(e) NULL)
+#       if (is.null(sf_all) || nrow(sf_all) == 0) return(NULL)
+#       sf_all <- tryCatch(st_cast(sf_all, "MULTIPOLYGON", warn = FALSE), error = function(e) NULL)
+#       if (is.null(sf_all) || nrow(sf_all) == 0) return(NULL)
+#
+#       g_out <- st_geometry(sf_all)
+#       if (length(g_out) == 0) return(NULL)
+#       g_out[[1]]
+#     }
+#
+#     area_within_tol <- function(area_ref, area_new) {
+#       if (!is.finite(area_ref) || !is.finite(area_new) || area_ref <= 0 || area_new <= 0) {
+#         return(FALSE)
+#       }
+#       tol <- max(abs_tol_m2, rel_tol_area * max(area_ref, area_new))
+#       abs(area_new - area_ref) <= tol
+#     }
+#
+#     iter <- 0L
+#     skipped_invalid_total <- 0L
+#     skipped_area_total <- 0L
+#     repeat {
+#       iter <- iter + 1L
+#
+#       sf_obj$AREA_ha <- as.numeric(st_area(sf_obj)) / 10000
+#       sf_obj$tmp_id <- seq_len(nrow(sf_obj))
+#
+#       ids_pequenos <- sf_obj$tmp_id[sf_obj$AREA_ha < threshold_ha]
+#       n_small_now <- length(ids_pequenos)
+#       removed_iter <- 0L
+#       skipped_invalid_iter <- 0L
+#       skipped_area_iter <- 0L
+#       processed_iter <- 0L
+#
+#       if (isTRUE(verbose_mode)) {
+#         cat(sprintf("Iteracao %d - poligonos pequenos: %d\n", iter, n_small_now))
+#       }
+#
+#       if (n_small_now == 0) {
+#         if (isTRUE(verbose_mode)) cat("Paragem: nao existem mais poligonos abaixo do limiar.\n")
+#         break
+#       }
+#
+#       if (iter > max_iter) {
+#         if (isTRUE(verbose_mode)) cat("Paragem: atingido numero maximo de iteracoes.\n")
+#         break
+#       }
+#
+#       report_progress <- function() {
+#         ignored_iter <- skipped_invalid_iter + skipped_area_iter
+#         if (isTRUE(verbose_mode) && (processed_iter %% 250L == 0L || processed_iter == n_small_now)) {
+#           cat(sprintf(
+#             "Iteracao %d - processados: %d/%d | agregados: %d | ignorados: %d\n",
+#             iter, processed_iter, n_small_now, removed_iter, ignored_iter
+#           ))
+#         }
+#         if (is.function(progress_cb) && (processed_iter %% 250L == 0L || processed_iter == n_small_now)) {
+#           progress_cb(list(
+#             status = "running",
+#             stage = sprintf("%s | iter %d", progress_stage, iter),
+#             processados = processed_iter,
+#             total = n_small_now,
+#             agregados = removed_iter,
+#             ignorados = ignored_iter
+#           ))
+#         }
+#       }
+#
+#       for (id_small in ids_pequenos) {
+#         processed_iter <- processed_iter + 1L
+#         idx_small <- match(id_small, sf_obj$tmp_id)
+#         if (is.na(idx_small)) {
+#           report_progress()
+#           next
+#         }
+#
+#         feat_small <- sf_obj[idx_small, ]
+#
+#         idx_touch <- st_touches(feat_small, sf_obj)[[1]]
+#         if (length(idx_touch) > 0) {
+#           idx_candidatos <- idx_touch
+#         } else {
+#           idx_int <- st_intersects(feat_small, sf_obj)[[1]]
+#           idx_int <- setdiff(idx_int, idx_small)
+#           idx_candidatos <- idx_int
+#         }
+#
+#         # Fallback final: vizinho mais proximo dentro da tolerancia para fechar micro-gaps
+#         if (length(idx_candidatos) == 0 && tolerancia_gap > 0 && nrow(sf_obj) > 1) {
+#           idx_all <- setdiff(seq_len(nrow(sf_obj)), idx_small)
+#           d_all <- tryCatch(
+#             suppressWarnings(as.numeric(st_distance(feat_small, sf_obj[idx_all, ], by_element = FALSE))),
+#             error = function(e) rep(NA_real_, length(idx_all))
+#           )
+#           if (length(d_all) == length(idx_all)) {
+#             ok <- which(!is.na(d_all) & d_all <= tolerancia_gap)
+#             if (length(ok) > 0) {
+#               idx_candidatos <- idx_all[ok]
+#             }
+#           }
+#         }
+#
+#         if (length(idx_candidatos) == 0) {
+#           report_progress()
+#           next
+#         }
+#
+#         vizinhos <- sf_obj[idx_candidatos, ]
+#         vizinhos <- vizinhos[vizinhos$tmp_id != id_small, ]
+#         if (nrow(vizinhos) == 0) {
+#           report_progress()
+#           next
+#         }
+#
+#         vizinhos$AREA_ha_tmp <- as.numeric(st_area(vizinhos)) / 10000
+#         vizinhos_grandes <- vizinhos[vizinhos$AREA_ha_tmp >= threshold_ha, ]
+#         vizinhos_candidatos <- if (nrow(vizinhos_grandes) > 0) vizinhos_grandes else vizinhos
+#
+#         if (nrow(vizinhos_candidatos) == 1) {
+#           id_best <- vizinhos_candidatos$tmp_id[1]
+#           feat_best <- sf_obj[sf_obj$tmp_id == id_best, ]
+#           geom_new <- tryCatch(st_union(feat_best, feat_small), error = function(e) NULL)
+#         } else {
+#           boundary_small <- tryCatch(st_boundary(feat_small), error = function(e) NULL)
+#           border_len <- numeric(nrow(vizinhos_candidatos))
+#           if (!is.null(boundary_small)) {
+#             for (k in seq_len(nrow(vizinhos_candidatos))) {
+#               border_len[k] <- tryCatch(
+#                 {
+#                   inter_b <- suppressWarnings(
+#                     st_intersection(
+#                       boundary_small,
+#                       st_boundary(vizinhos_candidatos[k, ])
+#                     )
+#                   )
+#                   len_b <- suppressWarnings(st_length(inter_b))
+#                   if (length(len_b) == 0) 0 else as.numeric(sum(len_b, na.rm = TRUE))
+#                 },
+#                 error = function(e) NA_real_
+#               )
+#             }
+#           } else {
+#             border_len[] <- NA_real_
+#           }
+#
+#           vizinhos_candidatos$border_len <- border_len
+#           vizinhos_com_aresta <- vizinhos_candidatos[
+#             !is.na(vizinhos_candidatos$border_len) & vizinhos_candidatos$border_len > 0,
+#           ]
+#
+#           if (nrow(vizinhos_com_aresta) > 0) {
+#             idx_best <- which.max(vizinhos_com_aresta$border_len)
+#             id_best <- vizinhos_com_aresta$tmp_id[idx_best]
+#             feat_best <- sf_obj[sf_obj$tmp_id == id_best, ]
+#             geom_new <- tryCatch(st_union(feat_best, feat_small), error = function(e) NULL)
+#           } else {
+#             if (tolerancia_gap <= 0) {
+#               report_progress()
+#               next
+#             }
+#             d_viz <- tryCatch(
+#               suppressWarnings(as.numeric(st_distance(feat_small, vizinhos_candidatos, by_element = FALSE))),
+#               error = function(e) rep(NA_real_, nrow(vizinhos_candidatos))
+#             )
+#             if (length(d_viz) != nrow(vizinhos_candidatos)) {
+#               report_progress()
+#               next
+#             }
+#             ok_d <- which(!is.na(d_viz) & d_viz <= tolerancia_gap)
+#             if (length(ok_d) == 0) {
+#               report_progress()
+#               next
+#             }
+#
+#             idx_best <- ok_d[which.min(d_viz[ok_d])]
+#             id_best <- vizinhos_candidatos$tmp_id[idx_best]
+#             feat_best <- sf_obj[sf_obj$tmp_id == id_best, ]
+#
+#             # Ponte geometrica minima para unir casos de contacto por ponto/micro-gap
+#             bridge_tol <- max(tolerancia_gap / 2, 0.001)
+#             geom_new <- tryCatch(
+#               suppressWarnings(
+#                 st_union(
+#                   st_buffer(feat_best, bridge_tol),
+#                   st_buffer(feat_small, bridge_tol)
+#                 )
+#               ),
+#               error = function(e) NULL
+#             )
+#             geom_new <- tryCatch(
+#               suppressWarnings(st_buffer(geom_new, -bridge_tol)),
+#               error = function(e) NULL
+#             )
+#           }
+#         }
+#
+#         geom_new_norm <- normalizar_merge_geom(geom_new, st_crs(sf_obj))
+#         if (is.null(geom_new_norm)) {
+#           skipped_invalid_iter <- skipped_invalid_iter + 1L
+#           skipped_invalid_total <- skipped_invalid_total + 1L
+#           report_progress()
+#           next
+#         }
+#
+#         area_ref <- tryCatch(as.numeric(st_area(st_as_sfc(geom_new, crs = st_crs(sf_obj)))), error = function(e) NA_real_)
+#         area_new <- tryCatch(as.numeric(st_area(st_as_sfc(geom_new_norm, crs = st_crs(sf_obj)))), error = function(e) NA_real_)
+#         if (!area_within_tol(area_ref, area_new)) {
+#           skipped_area_iter <- skipped_area_iter + 1L
+#           skipped_area_total <- skipped_area_total + 1L
+#           report_progress()
+#           next
+#         }
+#
+#         sf_obj$geometry[sf_obj$tmp_id == id_best] <- st_sfc(
+#           geom_new_norm,
+#           crs = st_crs(sf_obj)
+#         )
+#         sf_obj <- sf_obj[sf_obj$tmp_id != id_small, ]
+#         removed_iter <- removed_iter + 1L
+#         report_progress()
+#       }
+#
+#       sf_obj <- st_make_valid(sf_obj)
+#       sf_obj <- sf_obj[!st_is_empty(sf_obj), ]
+#       sf_obj <- st_collection_extract(sf_obj, "POLYGON")
+#
+#       if (isTRUE(verbose_mode) && skipped_invalid_iter > 0) {
+#         cat(sprintf("Iteracao %d - agregacoes ignoradas por geometria invalida: %d\n", iter, skipped_invalid_iter))
+#       }
+#       if (isTRUE(verbose_mode) && skipped_area_iter > 0) {
+#         cat(sprintf("Iteracao %d - agregacoes ignoradas por perda de area: %d\n", iter, skipped_area_iter))
+#       }
+#
+#       if (removed_iter == 0) {
+#         if (isTRUE(verbose_mode)) cat("Paragem: nenhuma agregacao na iteracao.\n")
+#         break
+#       }
+#     }
+#
+#     if (isTRUE(verbose_mode) && skipped_invalid_total > 0) {
+#       cat(sprintf("Total de agregacoes ignoradas por geometria invalida: %d\n", skipped_invalid_total))
+#     }
+#     if (isTRUE(verbose_mode) && skipped_area_total > 0) {
+#       cat(sprintf("Total de agregacoes ignoradas por perda de area: %d\n", skipped_area_total))
+#     }
+#
+#     if ("tmp_id" %in% names(sf_obj)) sf_obj$tmp_id <- NULL
+#     if ("AREA_ha_tmp" %in% names(sf_obj)) sf_obj$AREA_ha_tmp <- NULL
+#     if ("border_len" %in% names(sf_obj)) sf_obj$border_len <- NULL
+#
+#     sf_obj
+#   }
+#
+#   rbind_sf_align <- function(sf_list, template_sf = NULL) {
+#     sf_list <- Filter(function(x) !is.null(x) && inherits(x, "sf"), sf_list)
+#     if (length(sf_list) == 0) {
+#       if (!is.null(template_sf) && inherits(template_sf, "sf")) {
+#         return(template_sf[0, , drop = FALSE])
+#       }
+#       return(NULL)
+#     }
+#
+#     all_cols <- unique(unlist(lapply(sf_list, names), use.names = FALSE))
+#     fill_missing_col <- function(col_name, n_rows) {
+#       exemplar <- NULL
+#       for (obj in sf_list) {
+#         if (col_name %in% names(obj)) {
+#           exemplar <- obj[[col_name]]
+#           break
+#         }
+#       }
+#       if (!is.null(exemplar) && (is.integer(exemplar) || is.numeric(exemplar))) {
+#         return(rep(-1, n_rows))
+#       }
+#       rep(NA, n_rows)
+#     }
+#     sf_list <- lapply(sf_list, function(x) {
+#       miss <- setdiff(all_cols, names(x))
+#       if (length(miss) > 0) {
+#         for (col in miss) x[[col]] <- fill_missing_col(col, nrow(x))
+#       }
+#       x[, all_cols, drop = FALSE]
+#     })
+#
+#     do.call(rbind, sf_list)
+#   }
+#
+#   agregar_local2_rodeado_local1 <- function(
+#     local1_sf,
+#     local2_sf,
+#     local3_sf,
+#     outros_sf,
+#     threshold_ha,
+#     verbose_mode = FALSE,
+#     progress_cb = NULL,
+#     progress_stage = "local2_rod_local1"
+#   ) {
+#     if (nrow(local1_sf) == 0 || nrow(local2_sf) == 0) {
+#       return(list(
+#         local1 = local1_sf,
+#         local2 = local2_sf,
+#         n_candidatos = 0L,
+#         n_transferidos = 0L,
+#         n_ignorados = 0L
+#       ))
+#     }
+#
+#     normalizar_merge_geom_local <- function(geom_obj, crs_ref) {
+#       extrair_geom <- function(x) {
+#         if (is.null(x)) return(NULL)
+#         if (inherits(x, "sf")) x <- st_geometry(x)
+#         if (inherits(x, "sfc")) {
+#           if (length(x) == 0) return(NULL)
+#           return(x[[1]])
+#         }
+#         if (inherits(x, "sfg")) return(x)
+#         NULL
+#       }
+#
+#       g <- extrair_geom(geom_obj)
+#       if (is.null(g)) return(NULL)
+#
+#       sf_tmp <- tryCatch(
+#         st_as_sf(data.frame(.id = 1L), geometry = st_sfc(g, crs = crs_ref)),
+#         error = function(e) NULL
+#       )
+#       if (is.null(sf_tmp)) return(NULL)
+#
+#       sf_tmp <- tryCatch(st_make_valid(sf_tmp), error = function(e) NULL)
+#       if (is.null(sf_tmp)) return(NULL)
+#
+#       sf_tmp <- tryCatch(st_collection_extract(sf_tmp, "POLYGON"), error = function(e) NULL)
+#       if (is.null(sf_tmp) || nrow(sf_tmp) == 0) return(NULL)
+#
+#       sf_tmp <- sf_tmp[!st_is_empty(sf_tmp), ]
+#       if (nrow(sf_tmp) == 0) return(NULL)
+#
+#       sf_tmp <- tryCatch(st_cast(sf_tmp, "MULTIPOLYGON", warn = FALSE), error = function(e) NULL)
+#       if (is.null(sf_tmp) || nrow(sf_tmp) == 0) return(NULL)
+#
+#       geom_all <- tryCatch(
+#         st_union(st_geometry(sf_tmp)),
+#         error = function(e) st_combine(st_geometry(sf_tmp))
+#       )
+#       if (is.null(geom_all) || length(geom_all) == 0) return(NULL)
+#
+#       sf_all <- tryCatch(
+#         st_as_sf(data.frame(.id = 1L), geometry = st_sfc(geom_all[[1]], crs = crs_ref)),
+#         error = function(e) NULL
+#       )
+#       if (is.null(sf_all)) return(NULL)
+#       sf_all <- tryCatch(st_collection_extract(sf_all, "POLYGON"), error = function(e) NULL)
+#       if (is.null(sf_all) || nrow(sf_all) == 0) return(NULL)
+#       sf_all <- tryCatch(st_cast(sf_all, "MULTIPOLYGON", warn = FALSE), error = function(e) NULL)
+#       if (is.null(sf_all) || nrow(sf_all) == 0) return(NULL)
+#
+#       g_out <- st_geometry(sf_all)
+#       if (length(g_out) == 0) return(NULL)
+#       g_out[[1]]
+#     }
+#
+#     area_within_tol_local <- function(area_ref, area_new) {
+#       if (!is.finite(area_ref) || !is.finite(area_new) || area_ref <= 0 || area_new <= 0) {
+#         return(FALSE)
+#       }
+#       tol <- max(abs_tol_m2, rel_tol_area * max(area_ref, area_new))
+#       abs(area_new - area_ref) <= tol
+#     }
+#
+#     local1_sf$.__l1_id <- seq_len(nrow(local1_sf))
+#     local2_sf$.__l2_id <- seq_len(nrow(local2_sf))
+#     local2_sf$AREA_ha <- as.numeric(st_area(local2_sf)) / 10000
+#
+#     ids_candidatos <- local2_sf$.__l2_id[
+#       !is.na(local2_sf$AREA_ha) &
+#         local2_sf$AREA_ha < threshold_ha
+#     ]
+#
+#     n_candidatos <- length(ids_candidatos)
+#     n_transferidos <- 0L
+#     n_ignorados <- 0L
+#     n_ignorados_area <- 0L
+#     processed_iter <- 0L
+#
+#     if (isTRUE(verbose_mode)) {
+#       cat(sprintf("Local 2 rodeado por Local 1 - candidatos: %d\n", n_candidatos))
+#     }
+#
+#     for (cid in ids_candidatos) {
+#       processed_iter <- processed_iter + 1L
+#       if (isTRUE(verbose_mode) && (processed_iter %% 250L == 0L || processed_iter == n_candidatos)) {
+#         cat(sprintf(
+#           "Local 2 rodeado por Local 1 - processados: %d/%d | agregados: %d | ignorados: %d\n",
+#           processed_iter, n_candidatos, n_transferidos, n_ignorados
+#         ))
+#       }
+#       if (is.function(progress_cb) && (processed_iter %% 250L == 0L || processed_iter == n_candidatos)) {
+#         progress_cb(list(
+#           status = "running",
+#           stage = progress_stage,
+#           processados = processed_iter,
+#           total = n_candidatos,
+#           agregados = n_transferidos,
+#           ignorados = n_ignorados
+#         ))
+#       }
+#
+#       idx_small <- match(cid, local2_sf$.__l2_id)
+#       if (is.na(idx_small)) next
+#
+#       feat_small <- local2_sf[idx_small, ]
+#
+#       l1_ctx <- local1_sf
+#       l2_ctx <- local2_sf
+#       l3_ctx <- local3_sf
+#       out_ctx <- outros_sf
+#
+#       l1_ctx$.__ctx_local <- rep(1L, nrow(l1_ctx))
+#       l2_ctx$.__ctx_local <- rep(2L, nrow(l2_ctx))
+#       l3_ctx$.__ctx_local <- rep(3L, nrow(l3_ctx))
+#       out_ctx$.__ctx_local <- rep(99L, nrow(out_ctx))
+#
+#       if (!".__l1_id" %in% names(l2_ctx)) l2_ctx$.__l1_id <- rep(NA_integer_, nrow(l2_ctx))
+#       if (!".__l1_id" %in% names(l3_ctx)) l3_ctx$.__l1_id <- rep(NA_integer_, nrow(l3_ctx))
+#       if (!".__l1_id" %in% names(out_ctx)) out_ctx$.__l1_id <- rep(NA_integer_, nrow(out_ctx))
+#
+#       if (!".__l2_id" %in% names(l1_ctx)) l1_ctx$.__l2_id <- rep(NA_integer_, nrow(l1_ctx))
+#       if (!".__l2_id" %in% names(l3_ctx)) l3_ctx$.__l2_id <- rep(NA_integer_, nrow(l3_ctx))
+#       if (!".__l2_id" %in% names(out_ctx)) out_ctx$.__l2_id <- rep(NA_integer_, nrow(out_ctx))
+#
+#       contexto <- rbind_sf_align(
+#         list(l1_ctx, l2_ctx, l3_ctx, out_ctx),
+#         template_sf = l1_ctx
+#       )
+#       if (is.null(contexto)) next
+#
+#       idx_ctx_small <- which(contexto$.__ctx_local == 2L & contexto$.__l2_id == cid)
+#       if (length(idx_ctx_small) != 1) next
+#       idx_ctx_small <- idx_ctx_small[1]
+#
+#       idx_viz <- tryCatch(st_touches(contexto[idx_ctx_small, ], contexto)[[1]], error = function(e) integer(0))
+#       idx_viz <- setdiff(idx_viz, idx_ctx_small)
+#       if (length(idx_viz) == 0) {
+#         idx_viz <- tryCatch(st_intersects(contexto[idx_ctx_small, ], contexto)[[1]], error = function(e) integer(0))
+#         idx_viz <- setdiff(idx_viz, idx_ctx_small)
+#       }
+#       if (length(idx_viz) == 0) next
+#
+#       if (!all(contexto$.__ctx_local[idx_viz] == 1L, na.rm = TRUE)) next
+#
+#       idx_viz_l1 <- idx_viz[contexto$.__ctx_local[idx_viz] == 1L]
+#       if (length(idx_viz_l1) == 0) next
+#
+#       boundary_small <- tryCatch(st_boundary(feat_small), error = function(e) NULL)
+#       if (is.null(boundary_small)) {
+#         n_ignorados <- n_ignorados + 1L
+#         next
+#       }
+#
+#       border_len <- rep(NA_real_, length(idx_viz_l1))
+#       for (k in seq_along(idx_viz_l1)) {
+#         border_len[k] <- tryCatch(
+#           {
+#             inter_b <- suppressWarnings(
+#               st_intersection(
+#                 boundary_small,
+#                 st_boundary(contexto[idx_viz_l1[k], ])
+#               )
+#             )
+#             len_b <- suppressWarnings(st_length(inter_b))
+#             if (length(len_b) == 0) 0 else as.numeric(sum(len_b, na.rm = TRUE))
+#           },
+#           error = function(e) NA_real_
+#         )
+#       }
+#
+#       if (all(is.na(border_len)) || all(border_len <= 0, na.rm = TRUE)) {
+#         n_ignorados <- n_ignorados + 1L
+#         next
+#       }
+#
+#       idx_best_ctx <- idx_viz_l1[which.max(ifelse(is.na(border_len), -Inf, border_len))]
+#       id_dest_l1 <- contexto$.__l1_id[idx_best_ctx]
+#       idx_dest <- match(id_dest_l1, local1_sf$.__l1_id)
+#       if (is.na(idx_dest)) {
+#         n_ignorados <- n_ignorados + 1L
+#         next
+#       }
+#
+#       feat_dest <- local1_sf[idx_dest, ]
+#       geom_new <- tryCatch(st_union(feat_dest, feat_small), error = function(e) NULL)
+#       geom_new_norm <- normalizar_merge_geom_local(geom_new, st_crs(local1_sf))
+#       if (is.null(geom_new_norm)) {
+#         n_ignorados <- n_ignorados + 1L
+#         next
+#       }
+#
+#       area_ref <- tryCatch(as.numeric(st_area(st_as_sfc(geom_new, crs = st_crs(local1_sf)))), error = function(e) NA_real_)
+#       area_new <- tryCatch(as.numeric(st_area(st_as_sfc(geom_new_norm, crs = st_crs(local1_sf)))), error = function(e) NA_real_)
+#       if (!area_within_tol_local(area_ref, area_new)) {
+#         n_ignorados <- n_ignorados + 1L
+#         n_ignorados_area <- n_ignorados_area + 1L
+#         next
+#       }
+#
+#       local1_sf$geometry[idx_dest] <- st_sfc(geom_new_norm, crs = st_crs(local1_sf))
+#       local2_sf <- local2_sf[local2_sf$.__l2_id != cid, ]
+#       n_transferidos <- n_transferidos + 1L
+#     }
+#
+#     local1_sf$.__l1_id <- NULL
+#     if (".__l2_id" %in% names(local1_sf)) local1_sf$.__l2_id <- NULL
+#     if (".__ctx_local" %in% names(local1_sf)) local1_sf$.__ctx_local <- NULL
+#
+#     if (".__l2_id" %in% names(local2_sf)) local2_sf$.__l2_id <- NULL
+#     if (".__l1_id" %in% names(local2_sf)) local2_sf$.__l1_id <- NULL
+#     if (".__ctx_local" %in% names(local2_sf)) local2_sf$.__ctx_local <- NULL
+#
+#     if (isTRUE(verbose_mode)) {
+#       cat(sprintf(
+#         "Local 2 rodeado por Local 1 - agregados: %d | ignorados: %d | ignorados_perda_area: %d\n",
+#         n_transferidos,
+#         n_ignorados,
+#         n_ignorados_area
+#       ))
+#     }
+#
+#     list(
+#       local1 = local1_sf,
+#       local2 = local2_sf,
+#       n_candidatos = as.integer(n_candidatos),
+#       n_transferidos = as.integer(n_transferidos),
+#       n_ignorados = as.integer(n_ignorados)
+#     )
+#   }
+#
+#   processar_subset_correcao <- function(sf_subset, verbose_mode = FALSE, progress_cb = NULL) {
+#     if (nrow(sf_subset) == 0) return(sf_subset)
+#
+#     local1 <- sf_subset[
+#       !is.na(sf_subset$Local) &
+#         sf_subset$Local == 1,
+#     ]
+#     local2 <- sf_subset[
+#       !is.na(sf_subset$Local) &
+#         sf_subset$Local == 2,
+#     ]
+#     local3 <- sf_subset[
+#       !is.na(sf_subset$Local) &
+#         sf_subset$Local == 3,
+#     ]
+#     outros <- sf_subset[
+#       is.na(sf_subset$Local) |
+#         !(sf_subset$Local %in% c(1, 2, 3)),
+#     ]
+#
+#     local3_corr <- local3
+#     if (is.function(progress_cb)) {
+#       progress_cb(list(status = "running", stage = "inicio", processados = 0L, total = nrow(sf_subset), agregados = 0L, ignorados = 0L))
+#     }
+#     for (iter_global in seq_len(max_small_iter)) {
+#       if (isTRUE(verbose_mode)) {
+#         cat(sprintf("Iteracao global %d/%d\n", iter_global, max_small_iter))
+#       }
+#
+#       local1_before_n <- nrow(local1)
+#       local2_before_n <- nrow(local2)
+#       if (nrow(local1) > 0) {
+#         if (isTRUE(verbose_mode)) cat("Processar Local 1\n")
+#         local1_corr <- agregar_pequenos_sf(
+#           local1,
+#           threshold_ha = threshold_ha,
+#           max_iter = max_small_iter,
+#           verbose_mode = verbose_mode,
+#           tolerancia_gap = tolerancia_gap_m,
+#           progress_cb = progress_cb,
+#           progress_stage = sprintf("local1 | iter_global %d", iter_global)
+#         )
+#       } else {
+#         local1_corr <- local1
+#       }
+#
+#       transf_local2_l1 <- agregar_local2_rodeado_local1(
+#         local1_sf = local1_corr,
+#         local2_sf = local2,
+#         local3_sf = local3,
+#         outros_sf = outros,
+#         threshold_ha = threshold_ha,
+#         verbose_mode = verbose_mode,
+#         progress_cb = progress_cb,
+#         progress_stage = sprintf("local2_rod_local1 | iter_global %d", iter_global)
+#       )
+#
+#       local1_corr <- transf_local2_l1$local1
+#       local2_after_transfer <- transf_local2_l1$local2
+#       n_transferidos <- as.integer(transf_local2_l1$n_transferidos)
+#
+#       if (nrow(local2_after_transfer) > 0) {
+#         if (isTRUE(verbose_mode)) cat("Processar Local 2\n")
+#         local2_corr <- agregar_pequenos_sf(
+#           local2_after_transfer,
+#           threshold_ha = threshold_ha,
+#           max_iter = max_small_iter,
+#           verbose_mode = verbose_mode,
+#           tolerancia_gap = tolerancia_gap_m,
+#           progress_cb = progress_cb,
+#           progress_stage = sprintf("local2 | iter_global %d", iter_global)
+#         )
+#       } else {
+#         local2_corr <- local2_after_transfer
+#       }
+#
+#       delta_local1 <- as.integer(local1_before_n - nrow(local1_corr))
+#       delta_local2 <- as.integer(local2_before_n - nrow(local2_corr))
+#
+#       if (isTRUE(verbose_mode)) {
+#         cat(sprintf(
+#           "Iteracao global %d - delta_local1: %d | delta_local2: %d | transferidos_l2_l1: %d\n",
+#           iter_global, delta_local1, delta_local2, n_transferidos
+#         ))
+#       }
+#       if (is.function(progress_cb)) {
+#         progress_cb(list(
+#           status = "running",
+#           stage = sprintf("iter_global %d/%d", iter_global, max_small_iter),
+#           processados = iter_global,
+#           total = max_small_iter,
+#           agregados = delta_local1 + delta_local2 + n_transferidos,
+#           ignorados = 0L
+#         ))
+#       }
+#
+#       local1 <- local1_corr
+#       local2 <- local2_corr
+#
+#       if (delta_local1 == 0L && delta_local2 == 0L && n_transferidos == 0L) {
+#         if (isTRUE(verbose_mode)) {
+#           cat("Paragem global: estabilizacao (sem alteracoes).\n")
+#         }
+#         break
+#       }
+#
+#       if (iter_global >= max_small_iter && isTRUE(verbose_mode)) {
+#         cat(sprintf("Paragem global: atingido limite maximo (%d).\n", max_small_iter))
+#       }
+#     }
+#
+#     sf_out <- rbind_sf_align(
+#       list(local1, local2, local3_corr, outros),
+#       template_sf = sf_subset
+#     )
+#     if (is.null(sf_out)) sf_out <- sf_subset[0, , drop = FALSE]
+#     if (is.function(progress_cb)) {
+#       progress_cb(list(status = "concluido", stage = "fim", processados = max_small_iter, total = max_small_iter, agregados = 0L, ignorados = 0L))
+#     }
+#     sf_out
+#   }
+#
+#   municipio_norm <- trimws(as.character(shp_stands_interface_final_sf$municipio))
+#   municipio_norm[is.na(municipio_norm) | !nzchar(municipio_norm)] <- "__SEM_MUNICIPIO__"
+#   municipios <- sort(unique(municipio_norm))
+#   idx_por_municipio <- lapply(municipios, function(m) which(municipio_norm == m))
+#   names(idx_por_municipio) <- municipios
+#
+#   if (isTRUE(verbose)) {
+#     cat(sprintf(
+#       "Correcao por municipio - grupos: %d | n_cores_correcao: %d\n",
+#       length(municipios),
+#       n_cores_correcao
+#     ))
+#   }
+#
+#   resultados_subsets <- list()
+#   progress_dir <- NULL
+#   if (length(municipios) > 0) {
+#     if (n_cores_correcao == 1L || length(municipios) == 1L) {
+#       resultados_subsets <- vector("list", length(municipios))
+#       for (i in seq_along(municipios)) {
+#         if (isTRUE(verbose)) {
+#           cat(sprintf(
+#             "Processar municipio: %s (%d/%d)\n",
+#             municipios[i],
+#             i,
+#             length(municipios)
+#           ))
+#         }
+#         idx_i <- idx_por_municipio[[i]]
+#         sf_i <- shp_stands_interface_final_sf[idx_i, , drop = FALSE]
+#         resultados_subsets[[i]] <- processar_subset_correcao(
+#           sf_subset = sf_i,
+#           verbose_mode = verbose
+#         )
+#       }
+#     } else {
+#       n_workers <- min(n_cores_correcao, length(municipios))
+#       if (isTRUE(verbose)) {
+#         cat(sprintf("Correcao por municipio em paralelo com %d workers.\n", n_workers))
+#       }
+#
+#       progress_enabled <- isTRUE(verbose) && isTRUE(progress_por_core)
+#       if (progress_enabled) {
+#         progress_dir <- file.path(
+#           tempdir(),
+#           paste0("correcao_progress_", format(Sys.time(), "%Y%m%d_%H%M%S"), "_", Sys.getpid())
+#         )
+#         dir.create(progress_dir, recursive = TRUE, showWarnings = FALSE)
+#         for (w in seq_len(n_workers)) {
+#           write_worker_state(progress_dir, w, list(
+#             status = "idle",
+#             stage = "aguardar",
+#             processados = 0L,
+#             total = 0L,
+#             agregados = 0L,
+#             ignorados = 0L,
+#             municipio = "-"
+#           ))
+#         }
+#         print_worker_progress_table(progress_dir, n_workers, title = "Progresso por worker (inicio)")
+#       }
+#
+#       cl <- if (progress_enabled) {
+#         makeCluster(n_workers, type = "SOCK", outfile = "")
+#       } else {
+#         makeCluster(n_workers, type = "SOCK")
+#       }
+#       on.exit(stopCluster(cl), add = TRUE)
+#       registerDoSNOW(cl)
+#       on.exit(registerDoSEQ(), add = TRUE)
+#
+#       progress <- function(n) NULL
+#       if (isTRUE(verbose)) {
+#         pb <- txtProgressBar(min = 0, max = length(municipios), style = 3)
+#         on.exit(try(close(pb), silent = TRUE), add = TRUE)
+#         progress <- function(n) {
+#           setTxtProgressBar(pb, n)
+#           if (n >= length(municipios)) cat("\n")
+#           flush.console()
+#         }
+#       }
+#       opts_snow <- list(progress = function(n) {
+#         progress(n)
+#         if (progress_enabled) {
+#           print_worker_progress_table(progress_dir, n_workers, title = sprintf("Progresso por worker (tarefas concluidas: %d/%d)", n, length(municipios)))
+#         }
+#       })
+#
+#       resultados_subsets <- foreach(
+#         i = seq_along(municipios),
+#         .packages = c("sf"),
+#         .options.snow = opts_snow,
+#         .export = c(
+#           "processar_subset_correcao",
+#           "agregar_pequenos_sf",
+#           "agregar_local2_rodeado_local1",
+#           "rbind_sf_align",
+#           "build_progress_callback",
+#           "write_worker_state",
+#           "threshold_ha",
+#           "max_small_iter",
+#           "tolerancia_gap_m",
+#           "max_iter",
+#           "idx_por_municipio",
+#           "shp_stands_interface_final_sf",
+#           "progress_dir",
+#           "n_workers",
+#           "municipios"
+#         )
+#       ) %dopar% {
+#         idx_i <- idx_por_municipio[[i]]
+#         sf_i <- shp_stands_interface_final_sf[idx_i, , drop = FALSE]
+#         worker_id <- ((i - 1L) %% n_workers) + 1L
+#         cb <- NULL
+#         if (!is.null(progress_dir) && nzchar(progress_dir)) {
+#           cb <- build_progress_callback(
+#             progress_dir = progress_dir,
+#             worker_id = worker_id,
+#             municipio_label = municipios[i]
+#           )
+#           cb(list(status = "running", stage = "arranque", processados = 0L, total = nrow(sf_i), agregados = 0L, ignorados = 0L))
+#         }
+#         processar_subset_correcao(
+#           sf_subset = sf_i,
+#           verbose_mode = FALSE,
+#           progress_cb = cb
+#         )
+#       }
+#
+#       if (progress_enabled) {
+#         print_worker_progress_table(progress_dir, n_workers, title = "Progresso por worker (fim)")
+#       }
+#     }
+#   }
+#
+#   shp_stands_interface_final_sf <- rbind_sf_align(
+#     resultados_subsets,
+#     template_sf = shp_stands_interface_edf_sf
+#   )
+#   if (is.null(shp_stands_interface_final_sf)) {
+#     shp_stands_interface_final_sf <- shp_stands_interface_edf_sf[0, ]
+#   }
+#
+#   shp_stands_interface_final_sf <- st_make_valid(shp_stands_interface_final_sf)
+#   shp_stands_interface_final_sf <- shp_stands_interface_final_sf[
+#     !st_is_empty(shp_stands_interface_final_sf),
+#   ]
+#   shp_stands_interface_final_sf <- st_collection_extract(
+#     shp_stands_interface_final_sf,
+#     "POLYGON"
+#   )
+#   shp_stands_interface_final_sf <- st_cast(
+#     shp_stands_interface_final_sf,
+#     "POLYGON",
+#     warn = FALSE
+#   )
+#
+#   ## G) RECALCULAR AREA_ha E NOVO ID
+#   shp_stands_interface_final_sf$AREA_ha <- as.numeric(
+#     st_area(shp_stands_interface_final_sf)
+#   ) / 10000
+#
+#   shp_stands_interface_final_sf <- shp_stands_interface_final_sf[
+#     !is.na(shp_stands_interface_final_sf$AREA_ha) &
+#       shp_stands_interface_final_sf$AREA_ha > 0,
+#   ]
+#
+#   shp_stands_interface_final_sf$Stand_IDv2 <- seq_len(nrow(shp_stands_interface_final_sf))
+#
+#   ## H) CONFERIR
+#   table(shp_stands_interface_final_sf$Local, useNA = "ifany")
+#   table(st_geometry_type(shp_stands_interface_final_sf))
+#   summary(shp_stands_interface_final_sf$AREA_ha)
+#   n_abaixo_limite <- sum(shp_stands_interface_final_sf$AREA_ha < threshold_ha, na.rm = TRUE)
+#   cat(
+#     sprintf(
+#       "Poligonos abaixo do limite (< %.6f ha): %d\n",
+#       threshold_ha,
+#       as.integer(n_abaixo_limite)
+#     )
+#   )
+#
+#   ## I) GUARDAR
+#   write_vector(
+#     shp_stands_interface_final_sf,
+#     shp_stands_interface_final,
+#     layer = layer_shp_stands_interface_final,
+#     quiet = quiet_mode
+#   )
+#
+#   invisible(shp_stands_interface_final_sf)
+# }
 
 ## # - CALCULO DA EXPOSICAO ####
 run_exposure_interface <- function(
@@ -2185,6 +2296,11 @@ run_exposure_interface <- function(
 ) {
   print("funcao run_exposure_interface iniciou")
   on.exit(print("funcao run_exposure_interface terminou"), add = TRUE)
+  timing_ctx <- iniciar_registo_tempo_funcao(
+    "run_exposure_interface",
+    outputs = c(out_rds, out_csv)
+  )
+  on.exit(finalizar_registo_tempo_funcao(timing_ctx), add = TRUE)
 
   donut <- st_read(shp_donut_path, quiet = TRUE)
   donut <- st_make_valid(donut)
@@ -2280,6 +2396,11 @@ run_exposure_lcp <- function(
 ) {
   print("funcao run_exposure_lcp iniciou")
   on.exit(print("funcao run_exposure_lcp terminou"), add = TRUE)
+  timing_ctx <- iniciar_registo_tempo_funcao(
+    "run_exposure_lcp",
+    outputs = c(out_rds, out_csv)
+  )
+  on.exit(finalizar_registo_tempo_funcao(timing_ctx), add = TRUE)
 
   donut <- st_read(shp_donut_path, quiet = TRUE)
   donut <- st_make_valid(donut)
@@ -2438,6 +2559,11 @@ update_stands_exposicao <- function(
 ) {
   print("funcao update_stands_exposicao iniciou")
   on.exit(print("funcao update_stands_exposicao terminou"), add = TRUE)
+  timing_ctx <- iniciar_registo_tempo_funcao(
+    "update_stands_exposicao",
+    outputs = c(stands_exposicao_path)
+  )
+  on.exit(finalizar_registo_tempo_funcao(timing_ctx), add = TRUE)
 
   recalc_scope <- match.arg(recalc_scope)
   stands_exposicao_layer <- vector_layer_or_null(stands_exposicao_path, "stands_alg_expo")
@@ -2538,6 +2664,11 @@ update_stands_exposicao <- function(
 expo_values_correction <- function(stands_exposicao_path) {
   print("funcao expo_values_correction iniciou")
   on.exit(print("funcao expo_values_correction terminou"), add = TRUE)
+  timing_ctx <- iniciar_registo_tempo_funcao(
+    "expo_values_correction",
+    outputs = c(stands_exposicao_path)
+  )
+  on.exit(finalizar_registo_tempo_funcao(timing_ctx), add = TRUE)
 
   stands_exposicao_layer <- vector_layer_or_null(stands_exposicao_path, "stands_alg_expo")
 
@@ -2615,57 +2746,6 @@ expo_values_correction <- function(stands_exposicao_path) {
   invisible(shape)
 }
 
-gerar_stands_exposicao_limpa <- function(
-  stands_exposicao_path = stands_exposicao,
-  stands_exposicao_layer = NULL,
-  stands_exposicao_limpa_path = stands_exposicao_limpa,
-  stands_exposicao_limpa_layer = NULL,
-  verbose = FALSE
-) {
-  quiet_mode <- !isTRUE(verbose)
-  stands_exposicao_layer_use <- vector_layer_or_null(stands_exposicao_path, stands_exposicao_layer)
-  stands_exposicao_limpa_layer_use <- vector_layer_or_null(stands_exposicao_limpa_path, stands_exposicao_limpa_layer)
-
-  stands_sf <- read_vector(
-    stands_exposicao_path,
-    layer = stands_exposicao_layer_use,
-    quiet = quiet_mode
-  )
-
-  geom_type_chr <- as.character(st_geometry_type(stands_sf, by_geometry = TRUE))
-  idx_descartar <- geom_type_chr %in% c("POINT", "MULTIPOINT", "LINESTRING", "MULTILINESTRING")
-
-  n_total <- nrow(stands_sf)
-  n_descartar <- sum(idx_descartar, na.rm = TRUE)
-
-  stands_limpa <- stands_sf[!idx_descartar, , drop = FALSE]
-  stands_limpa <- st_make_valid(stands_limpa)
-  stands_limpa <- st_collection_extract(stands_limpa, "POLYGON", warn = FALSE)
-  stands_limpa <- stands_limpa[!st_is_empty(stands_limpa), , drop = FALSE]
-  if (nrow(stands_limpa) > 0) {
-    stands_limpa <- st_cast(stands_limpa, "MULTIPOLYGON", warn = FALSE)
-  }
-
-  dir.create(dirname(stands_exposicao_limpa_path), recursive = TRUE, showWarnings = FALSE)
-  write_vector(
-    stands_limpa,
-    stands_exposicao_limpa_path,
-    layer = stands_exposicao_limpa_layer_use,
-    quiet = quiet_mode
-  )
-
-  if (isTRUE(verbose)) {
-    cat(sprintf(
-      "stands_exposicao_limpa criado: total=%d | removidos (linha/ponto)=%d | restantes=%d\n",
-      n_total,
-      n_descartar,
-      nrow(stands_limpa)
-    ))
-  }
-
-  invisible(stands_limpa)
-}
-
 ## # - IDENTIFICAR AREAS PRIORITARIAS - INTERFACE ####
 informacao_UTs <- function(
   stands_exposicao_path,
@@ -2673,6 +2753,11 @@ informacao_UTs <- function(
 ) {
   print("funcao informacao_UTs iniciou")
   on.exit(print("funcao informacao_UTs terminou"), add = TRUE)
+  timing_ctx <- iniciar_registo_tempo_funcao(
+    "informacao_UTs",
+    outputs = c(stands_gestao_interface_path)
+  )
+  on.exit(finalizar_registo_tempo_funcao(timing_ctx), add = TRUE)
 
   stands_exposicao_layer <- vector_layer_or_null(stands_exposicao_path, "stands_alg_expo")
   stands_gestao_layer <- vector_layer_or_null(stands_gestao_interface_path, "stands_alg_interface")
@@ -2727,6 +2812,11 @@ prioridade_absoluta <- function(
 ) {
   print("funcao prioridade_absoluta iniciou")
   on.exit(print("funcao prioridade_absoluta terminou"), add = TRUE)
+  timing_ctx <- iniciar_registo_tempo_funcao(
+    "prioridade_absoluta",
+    outputs = c(stands_gestao_interface_path)
+  )
+  on.exit(finalizar_registo_tempo_funcao(timing_ctx), add = TRUE)
 
   stands_gestao_layer <- vector_layer_or_null(stands_gestao_interface_path, "stands_alg_interface")
 
@@ -2786,6 +2876,11 @@ prioridade_relativa <- function(
 ) {
   print("funcao prioridade_relativa iniciou")
   on.exit(print("funcao prioridade_relativa terminou"), add = TRUE)
+  timing_ctx <- iniciar_registo_tempo_funcao(
+    "prioridade_relativa",
+    outputs = c(stands_gestao_interface_path)
+  )
+  on.exit(finalizar_registo_tempo_funcao(timing_ctx), add = TRUE)
 
   stands_gestao_layer <- vector_layer_or_null(stands_gestao_interface_path, "stands_alg_interface")
 
@@ -2854,6 +2949,422 @@ prioridade_relativa <- function(
   stands_gestao_sf
 }
 
+gerar_resumo_pabs_municipio <- function(
+  stands_gestao_interface_path = stands_gestao_interface,
+  csv_saida = csv_area_pabs_pct_municipio,
+  png_saida = png_grafico_area_p80_municipio
+) {
+  timing_ctx <- iniciar_registo_tempo_funcao(
+    "gerar_resumo_pabs_municipio",
+    outputs = c(csv_saida, png_saida)
+  )
+  on.exit(finalizar_registo_tempo_funcao(timing_ctx), add = TRUE)
+
+  if (!requireNamespace("ggplot2", quietly = TRUE)) {
+    stop(
+      "Pacote 'ggplot2' nao encontrado. Instala para gerar o grafico de PAbs_pct por municipio.",
+      call. = FALSE
+    )
+  }
+
+  stands_gestao_layer <- vector_layer_or_null(stands_gestao_interface_path, "stands_alg_interface")
+  stands_gestao_sf <- read_vector(stands_gestao_interface_path, layer = stands_gestao_layer, quiet = TRUE)
+
+  required_cols <- c("municipio", "Local", "AREA_ha", "PAbs_pct")
+  missing_cols <- setdiff(required_cols, names(stands_gestao_sf))
+  if (length(missing_cols) > 0) {
+    stop(
+      paste(
+        "Faltam colunas obrigatorias em stands_gestao_interface para resumo PAbs_pct:",
+        paste(missing_cols, collapse = ", ")
+      ),
+      call. = FALSE
+    )
+  }
+
+  dados <- sf::st_drop_geometry(stands_gestao_sf)
+  dados$municipio <- trimws(as.character(dados$municipio))
+  dados$Local_num <- suppressWarnings(as.integer(as.character(dados$Local)))
+  dados$AREA_ha_num <- suppressWarnings(as.numeric(as.character(dados$AREA_ha)))
+  dados$PAbs_pct_num <- suppressWarnings(as.integer(as.character(dados$PAbs_pct)))
+
+  idx_municipio <- !is.na(dados$municipio) & nzchar(dados$municipio)
+
+  area_interface_mun <- dados[idx_municipio & !is.na(dados$Local_num) & dados$Local_num == 1, , drop = FALSE] %>%
+    dplyr::group_by(municipio) %>%
+    dplyr::summarise(area_interface_ha = sum(AREA_ha_num, na.rm = TRUE), .groups = "drop")
+
+  area_classes_mun <- dados[
+    idx_municipio &
+      !is.na(dados$PAbs_pct_num) &
+      dados$PAbs_pct_num > 0,
+    ,
+    drop = FALSE
+  ] %>%
+    dplyr::group_by(municipio, PAbs_pct_num) %>%
+    dplyr::summarise(area_ha = sum(AREA_ha_num, na.rm = TRUE), .groups = "drop") %>%
+    tidyr::pivot_wider(
+      names_from = PAbs_pct_num,
+      names_prefix = "P",
+      values_from = area_ha,
+      values_fill = 0
+    )
+
+  area_classes_mun <- dplyr::left_join(area_interface_mun, area_classes_mun, by = "municipio")
+
+  cols_p <- paste0("P", 1:10)
+  for (col in cols_p) {
+    if (!col %in% names(area_classes_mun)) {
+      area_classes_mun[[col]] <- 0
+    } else {
+      area_classes_mun[[col]] <- as.numeric(area_classes_mun[[col]])
+      area_classes_mun[[col]][is.na(area_classes_mun[[col]])] <- 0
+    }
+  }
+
+  area_classes_mun <- area_classes_mun %>%
+    dplyr::mutate(
+      `P>80` = P9 + P10,
+      `area interface (ha)` = as.numeric(area_interface_ha),
+      `relativo ao municipio` = dplyr::if_else(
+        !is.na(`area interface (ha)`) & `area interface (ha)` > 0,
+        (`P>80` / `area interface (ha)`) * 100,
+        NA_real_
+      )
+    ) %>%
+    dplyr::select(
+      municipio,
+      dplyr::all_of(cols_p),
+      `P>80`,
+      `area interface (ha)`,
+      `relativo ao municipio`
+    ) %>%
+    dplyr::arrange(municipio)
+
+  area_interface_algarve <- sum(area_classes_mun$`area interface (ha)`, na.rm = TRUE)
+
+  linha_algarve <- area_classes_mun %>%
+    dplyr::summarise(
+      municipio = "Algarve",
+      dplyr::across(
+        where(is.numeric),
+        ~ sum(.x, na.rm = TRUE)
+      )
+    ) %>%
+    dplyr::mutate(
+      `relativo ao municipio` = dplyr::if_else(
+        !is.na(`area interface (ha)`) & `area interface (ha)` > 0,
+        (`P>80` / `area interface (ha)`) * 100,
+        NA_real_
+      )
+    )
+
+  area_classes_mun <- dplyr::bind_rows(
+    area_classes_mun,
+    linha_algarve
+  ) %>%
+    dplyr::mutate(
+      `Relativo ao Algarve` = if (is.finite(area_interface_algarve) && area_interface_algarve > 0) {
+        (`P>80` / area_interface_algarve) * 100
+      } else {
+        NA_real_
+      }
+    )
+
+  dir.create(dirname(csv_saida), recursive = TRUE, showWarnings = FALSE)
+  write.csv(area_classes_mun, csv_saida, row.names = FALSE)
+
+  grafico_df <- area_classes_mun %>%
+    dplyr::filter(municipio != "Algarve")
+
+  if (nrow(grafico_df) > 0) {
+    grafico_df$municipio <- factor(grafico_df$municipio, levels = grafico_df$municipio)
+  }
+
+  max_finite <- function(x) {
+    x_num <- suppressWarnings(as.numeric(x))
+    x_num <- x_num[is.finite(x_num)]
+    if (length(x_num) == 0) return(NA_real_)
+    max(x_num, na.rm = TRUE)
+  }
+
+  max_rel_mun <- max_finite(grafico_df$`relativo ao municipio`)
+  max_rel_alg <- max_finite(grafico_df$`Relativo ao Algarve`)
+  lim_sup_prim <- if (is.finite(max_rel_mun) && max_rel_mun > 0) max_rel_mun * 1.05 else 1
+  lim_sup_sec <- if (is.finite(max_rel_alg) && max_rel_alg > 0) max_rel_alg * 1.05 else 1
+  escala <- lim_sup_prim / lim_sup_sec
+  if (!is.finite(escala) || escala <= 0) escala <- 1
+  breaks_prim <- seq(0, ceiling(lim_sup_prim / 10) * 10, by = 10)
+  if (length(breaks_prim) == 0) breaks_prim <- c(0, 10)
+
+  grafico_p80 <- ggplot2::ggplot(grafico_df, ggplot2::aes(x = municipio)) +
+    ggplot2::geom_col(
+      ggplot2::aes(
+        y = `relativo ao municipio`,
+        fill = "Relativo ao municÃ­pio"
+      ),
+      width = 0.4
+    ) +
+    ggplot2::geom_line(
+      ggplot2::aes(
+        y = `Relativo ao Algarve` * escala,
+        color = "Relativo ao Algarve",
+        group = 1
+      ),
+      linewidth = 1
+    ) +
+    ggplot2::geom_point(
+      ggplot2::aes(
+        y = `Relativo ao Algarve` * escala,
+        color = "Relativo ao Algarve"
+      ),
+      size = 2
+    ) +
+    ggplot2::scale_fill_manual(values = c("Relativo ao municÃ­pio" = "darkorange")) +
+    ggplot2::scale_color_manual(values = c("Relativo ao Algarve" = "darkblue")) +
+    ggplot2::scale_y_continuous(
+      name = "% Relativamente ao Municipio",
+      limits = c(0, lim_sup_prim),
+      breaks = breaks_prim,
+      expand = ggplot2::expansion(mult = c(0, 0.02)),
+      sec.axis = ggplot2::sec_axis(
+        trans = ~ . / escala,
+        name = "% Relativamente ao Algarve"
+      )
+    ) +
+    ggplot2::labs(
+      title = "Ãrea de interface com exposicao muito elevada (>p80)",
+      x = NULL,
+      fill = NULL,
+      color = NULL
+    ) +
+    ggplot2::theme_minimal() +
+    ggplot2::theme(
+      axis.text.x = ggplot2::element_text(angle = 45, hjust = 1, size = 12),
+      axis.text.y = ggplot2::element_text(size = 12),
+      axis.title.y = ggplot2::element_text(size = 14),
+      axis.title.y.right = ggplot2::element_text(size = 14),
+      plot.title = ggplot2::element_text(hjust = 0.5, size = 18),
+      legend.position = c(0.08, 0.83),
+      legend.justification = c(0, 1),
+      legend.text = ggplot2::element_text(size = 13),
+      panel.border = ggplot2::element_rect(color = "grey75", fill = NA, linewidth = 0.5),
+      panel.grid.major = ggplot2::element_line(color = "grey85"),
+      panel.grid.major.x = ggplot2::element_blank(),
+      panel.grid.minor = ggplot2::element_blank()
+    )
+
+  dir.create(dirname(png_saida), recursive = TRUE, showWarnings = FALSE)
+  ggplot2::ggsave(
+    filename = png_saida,
+    plot = grafico_p80,
+    width = 14,
+    height = 7,
+    dpi = 300
+  )
+
+  invisible(
+    list(
+      tabela = area_classes_mun,
+      csv = csv_saida,
+      png = png_saida
+    )
+  )
+}
+
+UT_conflito_GC <- function(
+  shp_habitats_path = shp_habitats,
+  shp_stands_interface_final_path = shp_stands_interface_final,
+  verbose = FALSE
+) {
+  print("funcao UT_conflito_GC iniciou")
+  on.exit(print("funcao UT_conflito_GC terminou"), add = TRUE)
+  timing_ctx <- iniciar_registo_tempo_funcao(
+    "UT_conflito_GC",
+    outputs = c(shp_habitats_path, shp_stands_interface_final_path)
+  )
+  on.exit(finalizar_registo_tempo_funcao(timing_ctx), add = TRUE)
+
+  quiet_mode <- !isTRUE(verbose)
+
+  dir.create(dirname(shp_habitats_path), recursive = TRUE, showWarnings = FALSE)
+  dir.create(dirname(shp_stands_interface_final_path), recursive = TRUE, showWarnings = FALSE)
+
+  habitats_layer <- vector_layer_or_null(
+    shp_habitats_path,
+    tools::file_path_sans_ext(basename(shp_habitats_path))
+  )
+  stands_layer <- vector_layer_or_null(
+    shp_stands_interface_final_path,
+    layer_shp_stands_interface_final
+  )
+
+  shp_habitats_sf <- read_vector(
+    shp_habitats_path,
+    layer = habitats_layer,
+    quiet = quiet_mode
+  )
+  shp_stands_interface_final_sf <- read_vector(
+    shp_stands_interface_final_path,
+    layer = stands_layer,
+    quiet = quiet_mode
+  )
+
+  campos_originais_stands <- names(shp_stands_interface_final_sf)
+  campos_originais_stands <- setdiff(
+    campos_originais_stands,
+    c("area_inc", "perc_inc", "habit_inc")
+  )
+
+  required_habitats <- c("Ori_Gestao", "area_ha")
+  missing_habitats <- setdiff(required_habitats, names(shp_habitats_sf))
+  if (length(missing_habitats) > 0) {
+    stop(
+      paste(
+        "Faltam colunas obrigatorias em shp_habitats:",
+        paste(missing_habitats, collapse = ", ")
+      ),
+      call. = FALSE
+    )
+  }
+
+  required_stands <- c("Stand_IDv2", "AREA_ha")
+  missing_stands <- setdiff(required_stands, names(shp_stands_interface_final_sf))
+  if (length(missing_stands) > 0) {
+    stop(
+      paste(
+        "Faltam colunas obrigatorias em shp_stands_interface_final:",
+        paste(missing_stands, collapse = ", ")
+      ),
+      call. = FALSE
+    )
+  }
+
+  if (st_crs(shp_habitats_sf) != st_crs(shp_stands_interface_final_sf)) {
+    shp_habitats_sf <- st_transform(shp_habitats_sf, st_crs(shp_stands_interface_final_sf))
+  }
+
+  shp_habitats_sf <- st_make_valid(shp_habitats_sf)
+  shp_stands_interface_final_sf <- st_make_valid(shp_stands_interface_final_sf)
+
+  campos_remover_stands <- c("area_inc", "perc_inc", "habit_inc")
+  campos_para_remover_stands <- intersect(campos_remover_stands, names(shp_stands_interface_final_sf))
+  if (length(campos_para_remover_stands) > 0) {
+    shp_stands_interface_final_sf <- shp_stands_interface_final_sf %>%
+      select(-all_of(campos_para_remover_stands))
+  }
+
+  shp_habitats_sf <- shp_habitats_sf %>%
+    mutate(
+      Habit_ID = row_number(),
+      GCconflit = if_else(Ori_Gestao %in% c(2, 3), 1L, 0L)
+    )
+
+  hab_gc <- shp_habitats_sf %>%
+    filter(GCconflit == 1L) %>%
+    select(
+      Habit_ID,
+      habitat_area_ha = area_ha,
+      geometry
+    )
+
+  inter_gc <- st_intersection(
+    shp_stands_interface_final_sf %>% select(Stand_IDv2),
+    hab_gc
+  )
+
+  inter_gc <- inter_gc %>%
+    mutate(
+      area_inter_ha = as.numeric(st_area(geometry)) / 10000
+    )
+
+  resumo_gc <- inter_gc %>%
+    st_drop_geometry() %>%
+    group_by(Stand_IDv2) %>%
+    summarise(
+      area_inc = sum(area_inter_ha, na.rm = TRUE),
+      habit_inc = sum(
+        habitat_area_ha[!duplicated(Habit_ID)],
+        na.rm = TRUE
+      ),
+      .groups = "drop"
+    )
+
+  shp_stands_interface_final_sf <- shp_stands_interface_final_sf %>%
+    left_join(resumo_gc, by = "Stand_IDv2") %>%
+    mutate(
+      area_inc = dplyr::coalesce(as.numeric(area_inc), 0),
+      habit_inc = dplyr::coalesce(as.numeric(habit_inc), 0),
+      AREA_ha_num = suppressWarnings(as.numeric(AREA_ha))
+    ) %>%
+    mutate(
+      perc_inc = if_else(
+        !is.na(AREA_ha_num) & AREA_ha_num > 0,
+        100 * area_inc / AREA_ha_num,
+        0
+      )
+    ) %>%
+    mutate(
+      area_inc = if_else(
+        !is.na(AREA_ha_num) & abs(area_inc - AREA_ha_num) < 0.0001,
+        AREA_ha_num,
+        area_inc
+      ),
+      perc_inc = if_else(
+        !is.na(AREA_ha_num) & AREA_ha_num > 0,
+        100 * area_inc / AREA_ha_num,
+        0
+      ),
+      perc_inc = pmin(perc_inc, 100)
+    ) %>%
+    mutate(
+      area_inc = if_else(area_inc < 0.001, 0, area_inc),
+      perc_inc = if_else(area_inc == 0, 0, perc_inc),
+      habit_inc = if_else(area_inc == 0, 0, habit_inc)
+    ) %>%
+    select(-AREA_ha_num)
+
+  campos_finais_esperados <- c(
+    campos_originais_stands,
+    "area_inc",
+    "perc_inc",
+    "habit_inc"
+  )
+  missing_final_cols <- setdiff(campos_finais_esperados, names(shp_stands_interface_final_sf))
+  if (length(missing_final_cols) > 0) {
+    stop(
+      paste(
+        "Faltam colunas esperadas no resultado final de stands:",
+        paste(missing_final_cols, collapse = ", ")
+      ),
+      call. = FALSE
+    )
+  }
+
+  shp_stands_interface_final_sf <- shp_stands_interface_final_sf %>%
+    select(all_of(campos_finais_esperados))
+
+  write_vector(
+    shp_habitats_sf,
+    shp_habitats_path,
+    layer = habitats_layer,
+    quiet = quiet_mode
+  )
+  write_vector(
+    shp_stands_interface_final_sf,
+    shp_stands_interface_final_path,
+    layer = stands_layer,
+    quiet = quiet_mode
+  )
+
+  invisible(
+    list(
+      habitats = shp_habitats_sf,
+      stands = shp_stands_interface_final_sf
+    )
+  )
+}
+
 readme_manifesto_blocos <- function() {
   list(
     bloco_donuts = list(
@@ -2879,7 +3390,8 @@ readme_manifesto_blocos <- function() {
         shp_stands_base,
         shp_aglomerados_0_100,
         shp_aglomerados_base,
-        shp_municipios
+        shp_municipios,
+        shp_habitats
       ),
       outputs = c(
         shp_interface_dissolve,
@@ -2892,7 +3404,8 @@ readme_manifesto_blocos <- function() {
         stands_aglom_int_diss,
         stands_sem_aglomerado,
         shp_stands_interface_edf,
-        shp_stands_interface_final
+        shp_stands_interface_final,
+        shp_habitats
       )
     ),
     bloco_exposicao = list(
@@ -2929,8 +3442,7 @@ readme_manifesto_blocos <- function() {
         df_final500a1000_weighted_sum_aglomerados,
         df_final500a1000_weighted_sum_valor_natural,
         df_final500a1000_weighted_sum_valor_economico,
-        stands_exposicao,
-        stands_exposicao_limpa
+        stands_exposicao
       )
     ),
     bloco_prioridades_interface = list(
@@ -2939,10 +3451,43 @@ readme_manifesto_blocos <- function() {
         stands_gestao_interface
       ),
       outputs = c(
-        stands_gestao_interface
+        stands_gestao_interface,
+        csv_area_pabs_pct_municipio,
+        png_grafico_area_p80_municipio
       )
     )
   )
+}
+
+bloco_por_funcao_readme <- function(funcao_nome) {
+  if (!is.character(funcao_nome) || length(funcao_nome) != 1 || is.na(funcao_nome) || !nzchar(funcao_nome)) {
+    return(NULL)
+  }
+
+  # Evita duplicacao: os runners de bloco ja atualizam README internamente.
+  if (grepl("^executar_bloco_", funcao_nome)) {
+    return(NULL)
+  }
+
+  mapa <- c(
+    criar_donuts_valor_chave = "bloco_donuts",
+    stands_interface = "bloco_unidades_tratamento",
+    stands_edificado = "bloco_unidades_tratamento",
+    correcao_stands_final = "bloco_unidades_tratamento",
+    UT_conflito_GC = "bloco_unidades_tratamento",
+    run_exposure_interface = "bloco_exposicao",
+    run_exposure_lcp = "bloco_exposicao",
+    update_stands_exposicao = "bloco_exposicao",
+    expo_values_correction = "bloco_exposicao",
+    informacao_UTs = "bloco_prioridades_interface",
+    prioridade_absoluta = "bloco_prioridades_interface",
+    prioridade_relativa = "bloco_prioridades_interface",
+    gerar_resumo_pabs_municipio = "bloco_prioridades_interface"
+  )
+
+  bloco <- unname(mapa[[funcao_nome]])
+  if (is.null(bloco) || !nzchar(bloco)) return(NULL)
+  bloco
 }
 
 atualizar_readme_bloco <- function(
@@ -3106,6 +3651,13 @@ executar_bloco_unidades_tratamento <- function(
   )
   print("[executar_bloco_unidades_tratamento] correcao_stands_final terminou")
 
+  print("[executar_bloco_unidades_tratamento] UT_conflito_GC iniciou")
+  UT_conflito_GC(
+    shp_habitats_path = shp_habitats,
+    shp_stands_interface_final_path = shp_stands_interface_final
+  )
+  print("[executar_bloco_unidades_tratamento] UT_conflito_GC terminou")
+
   print("[executar_bloco_unidades_tratamento] atualizar_readme_bloco iniciou")
   atualizar_readme_bloco("bloco_unidades_tratamento")
   print("[executar_bloco_unidades_tratamento] atualizar_readme_bloco terminou")
@@ -3121,8 +3673,7 @@ executar_bloco_exposicao <- function(n_cores = n_cores) {
     dirname(df_final0a100_aglomerados),
     dirname(df_final100a500_aglomerados),
     dirname(df_final500a1000_aglomerados),
-    dirname(stands_exposicao),
-    dirname(stands_exposicao_limpa)
+    dirname(stands_exposicao)
   ))
   for (d in dirs_out) dir.create(d, recursive = TRUE, showWarnings = FALSE)
 
@@ -3246,12 +3797,6 @@ executar_bloco_exposicao <- function(n_cores = n_cores) {
   print("[executar_bloco_exposicao] expo_values_correction (2) iniciou")
   expo_values_correction(stands_exposicao)
   print("[executar_bloco_exposicao] expo_values_correction (2) terminou")
-  print("[executar_bloco_exposicao] gerar_stands_exposicao_limpa iniciou")
-  gerar_stands_exposicao_limpa(
-    stands_exposicao_path = stands_exposicao,
-    stands_exposicao_limpa_path = stands_exposicao_limpa
-  )
-  print("[executar_bloco_exposicao] gerar_stands_exposicao_limpa terminou")
 
   print("[executar_bloco_exposicao] atualizar_readme_bloco iniciou")
   atualizar_readme_bloco("bloco_exposicao")
@@ -3273,6 +3818,9 @@ executar_bloco_prioridades_interface <- function() {
   print("[executar_bloco_prioridades_interface] prioridade_relativa iniciou")
   stands_gestao_sf <- prioridade_relativa(stands_gestao_interface)
   print("[executar_bloco_prioridades_interface] prioridade_relativa terminou")
+  print("[executar_bloco_prioridades_interface] gerar_resumo_pabs_municipio iniciou")
+  gerar_resumo_pabs_municipio(stands_gestao_interface)
+  print("[executar_bloco_prioridades_interface] gerar_resumo_pabs_municipio terminou")
   print("[executar_bloco_prioridades_interface] atualizar_readme_bloco iniciou")
   atualizar_readme_bloco("bloco_prioridades_interface")
   print("[executar_bloco_prioridades_interface] atualizar_readme_bloco terminou")

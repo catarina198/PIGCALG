@@ -1,0 +1,26 @@
+quero que em cada funcao seja registado a data e hora de inicio e fim da execução dessa mesma funcao e que isso seja escrito num ficheiro txt "C:\projetos\PIGCALG\09_resultados_2026_v2\script\Tempos_de_corridas.txt"
+se este ficheiro já existir então o processo é acrescentar a nova informacao.
+
+
+
+
+Tempos:
+
+
+========================================
+Remoção de gaps, limpeza topológica e agregação iterativa de polígonos pequenos
+========================================
+
+Output final: C:\projetos\PIGCALG\09_resultados_2026_v2\Outputs_Algarve\Analise\V4_20260430\UTratamento\No_Gaps\stands_alg_interface_final.shp
+Total de polígonos finais: 159807
+
+----------------------------------------
+DATA/HORA INÍCIO:
+2026-05-07 16:28:02
+
+DATA/HORA FIM:
+2026-05-07 16:57:45
+
+DURAÇÃO TOTAL:
+0:29:42.881124
+----------------------------------------

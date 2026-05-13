@@ -4,11 +4,10 @@
 library(sf)
 library(raster)
 library(dplyr)
-library(exactextractr)
-library(tidyr)
 library(snow)
 library(doSNOW)
 library(foreach)
+
 
 ## CAMINHOS ####
 
@@ -34,6 +33,9 @@ p_arder3virg5 <- file.path(dir_inputs, "Simulacoes/BAU_FuelAcum_2030/Prob_condic
 # Municipios Algarve
 shp_municipios <- file.path(dir_auxiliar, "Municipios/algarve_mun.shp")
 
+# Habitats - conflitos com gestão de combustivel
+shp_habitats <- file.path(dir_auxiliar, "Habitats/habitats_valor_natural.shp")
+
 ##INPUTS DONNUTS DOS VALORES CHAVE##
 
 # Aglomerados
@@ -53,10 +55,13 @@ shp_valor_economico_500_1000 <- file.path(dir_inputs, "Valores_Chave/V2_2026/val
 
 
 ##OUTPUTS PRINCIPAIS ##
-nome_analise <- "V4_20260430"
+nome_analise <- "V4_20260512"
 
 dir_output_analise <- file.path(dir_outputs, nome_analise)
 README <- file.path(dir_output_analise, "README.txt")
+
+##TEMPOS DE EXECUÇÃO DAS FUNCOES##
+TEMPOS <- file.path(dir_output_analise, "TEMPOS_EXECUCAO.txt")
 
 #interface dissolvida
 dir_interface <- file.path(dir_output_analise, "Interface")
@@ -75,13 +80,13 @@ stands_aglom_int_diss <- file.path(dir_aglomerados, "stands_aglom_int_diss.shp")
 stands_sem_aglomerado <- file.path(dir_aglomerados, "stands_sem_aglomerado.shp")
 shp_stands_interface_edf <- file.path(dir_aglomerados, "shp_stands_interface_edf.shp")
 
-#aglomerados na interface no gaps (feito à parte no arcgis)
+#aglomerados na interface no gaps (feito a parte no arcgis)
 shp_stands_interface_edf_nogaps <- file.path(dir_aglomerados, "shp_stands_interface_edf_nogaps.shp")
 
 # Unidades Tratamento
 dir_unidades_tratamento <- file.path(dir_output_analise, "UTratamento")
-shp_stands_interface_final <- file.path(dir_unidades_tratamento, "stands_alg_interface_final.shp")
-
+#shp_stands_interface_final <- file.path(dir_unidades_tratamento, "stands_alg_interface_final.shp")
+shp_stands_interface_final <- file.path(dir_unidades_tratamento, "No_Gaps/stands_alg_interface_final.shp")
 # Exposicao
 dir_exposicao <- file.path(dir_output_analise, "Exposicao")
 
@@ -116,12 +121,14 @@ df_final500a1000_weighted_sum_valor_economico <- file.path(dir_dataFrames, "df_5
 dir_shapefile <- file.path(dir_exposicao, "Shapefile")
 
 stands_exposicao <- file.path(dir_shapefile, "stands_alg_expo.shp")
-stands_exposicao_limpa <- file.path(dir_shapefile, "stands_alg_expo_limpa.shp")
 
 # Gestao interface
 dir_gestao_interface <- file.path(dir_output_analise, "Gestao_Interface")
 
 stands_gestao_interface <- file.path(dir_gestao_interface, "stands_alg_gestao_interface.shp")
+dir_graficos_gestao_interface <- file.path(dir_gestao_interface, "graficos")
+csv_area_pabs_pct_municipio <- file.path(dir_graficos_gestao_interface, "area_PAbs_pct_por_municipio.csv")
+png_grafico_area_p80_municipio <- file.path(dir_graficos_gestao_interface, "grafico_area_p80_municipio.png")
 
 # Gestao paisagem
 dir_gestao_paisagem <- file.path(dir_output_analise, "Gestao_Paisagem")
@@ -132,10 +139,10 @@ stands_gestao_lcp <- file.path(dir_gestao_paisagem, "Shapefile/stands_alg_gestao
 ## PARAMETROS ##
 # Comentarios livres para registo no README do output
 comentarios <- "preencher '-1' em todos os casos que se quer considerar Null. 
-Isto porque o formato shapefile no Arcgis não distingue entre NA e 0"
+Isto porque o formato shapefile no Arcgis nao distingue entre NA e 0"
 
 # criar_donuts_valor_chave() -> valor-chave usado para gerar donuts
-tipo_valor_chave <- "valor_economico"  # "aglomerados", "valor_natural", "valor_economico"
+tipo_valor_chave <- "valor_natural"  # "aglomerados", "valor_natural", "valor_economico"
 
 # correcao_stands_final() -> limiar de eliminacao e modo verbose
 threshold_eliminate_ha_correcao <- 0.1
@@ -166,23 +173,22 @@ n_cores <- 4
 modo_execucao <- "funcao_especifica"
 
 # Usado apenas quando modo_execucao == "funcao_especifica"
-# Exemplos: "criar_donuts_valor_chave", "stands_interface", "stands_edificado",
-# "correcao_stands_final", "run_exposure_interface", "run_exposure_lcp",
+# Exemplos: "criar_donuts_valor_chave", "stands_interface", "stands_edificado", "correcao_stands_final", "UT_conflito_GC"
+#  "run_exposure_interface", "run_exposure_lcp",
 # "update_stands_exposicao", "expo_values_correction", "informacao_UTs",
-# "prioridade_absoluta", "prioridade_relativa", "executar_bloco_donuts", "executar_bloco_exposicao"
-funcao_especifica <- "correcao_stands_final"
+# "prioridade_absoluta", "prioridade_relativa", "gerar_resumo_pabs_municipio"
+
+## funcao "correcao_stands_final" não está a funcionar. depois de "stands_edificado"
+## tenho um script em python que corrige a shapefile (microgaps) e agrega todos
+## todos os poligonos pequenos (<1000m2)
+
+funcao_especifica <- "UT_conflito_GC"
 
 # Argumentos para a funcao especifica (deixar list() para usar defaults da funcao)
 args_funcao_especifica <- list(
-  shp_stands_interface_edf = shp_stands_interface_edf_nogaps,
-  shp_stands_interface_final = shp_stands_interface_final,
-  threshold_eliminate_ha = threshold_eliminate_ha_correcao,
-  max_small_iter = 10,
-  tolerancia_gap_m = 0.5,
-  n_cores_correcao = n_cores_correcao,
-  progress_por_core = progress_por_core_correcao,
-  verbose = verbose_correcao_stands_final
+  verbose = TRUE
 )
+
 
 
 
@@ -217,6 +223,20 @@ if (identical(modo_execucao, "all")) {
     what = get(funcao_especifica, mode = "function"),
     args = args_funcao_especifica
   )
+
+  bloco_readme <- bloco_por_funcao_readme(funcao_especifica)
+  if (!is.null(bloco_readme)) {
+    atualizar_readme_bloco(bloco_readme)
+  } else if (!grepl("^executar_bloco_", funcao_especifica)) {
+    # Apenas informa quando e uma funcao sem mapeamento conhecido de bloco.
+    message(
+      paste0(
+        "Sem mapeamento de README para a funcao '",
+        funcao_especifica,
+        "'. README nao atualizado neste modo."
+      )
+    )
+  }
 } else {
   stop(
     "modo_execucao invalido. Usa: 'all', 'bloco_donuts', 'bloco_unidades_tratamento', 'bloco_exposicao', 'bloco_prioridades_interface' ou 'funcao_especifica'.",
